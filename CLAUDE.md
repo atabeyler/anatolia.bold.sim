@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # Git kimliği ve commit kuralları
 
 Bu repoda commit atmadan **önce** her seferinde aşağıdakini çalıştır (repo-local,
