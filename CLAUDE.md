@@ -682,6 +682,14 @@ This applies to both the desktop app and the Android app: `Desktop Release`
 `main` and both read the same root `package.json` version, so a single
 version bump before pushing covers both releases in one shot.
 
+**Exception: documentation-only commits are exempt.** A push that only
+touches docs (`CLAUDE.md`, `AGENTS.md`, `README.md`, comments-only diffs,
+etc.) with no change to app code, build config, or dependencies does not
+need a version bump — bumping for those would just tag/ship an installer
+identical to the last one and trigger a redundant Render deploy for
+nothing. Bump the version on the next commit that actually changes app
+code.
+
 ### Android architecture
 
 "Yerel" mode on Android runs the same `sim-server` binary desktop's Tauri
