@@ -1,0 +1,77 @@
+{
+  "build": {
+    "beforeBuildCommand": "node stage-resources.mjs",
+    "beforeDevCommand": "",
+    "devPath": "dist-chooser",
+    "distDir": "dist-chooser",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "Anatolia Sim",
+    "version": "../../package.json"
+  },
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "identifier": "com.atabeylers.anatoliasim",
+      "icon": [
+        "icons/icon.ico",
+        "icons/icon-192.png",
+        "icons/icon-512.png"
+      ],
+      "targets": ["nsis", "updater"],
+      "resources": [
+        "resources/sim-server.exe",
+        "resources/client/dist/**/*"
+      ]
+    },
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "sidecar": false,
+        "open": false,
+        "execute": false
+      },
+      "process": {
+        "relaunch": true
+      }
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Anatolia Sim",
+        "width": 1600,
+        "height": 1000,
+        "minWidth": 1280,
+        "minHeight": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "maximized": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "dangerousRemoteDomainIpcAccess": [
+        {
+          "domain": "anatolia-sim.onrender.com",
+          "windows": ["main"],
+          "enableTauriAPI": true
+        },
+        {
+          "domain": "127.0.0.1",
+          "windows": ["main"],
+          "enableTauriAPI": true
+        }
+      ]
+    },
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": [
+        "https://anatolia-sim.onrender.com/api/updates/desktop/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgNDZEMTc1MzREMkU3RThFMQpSV1RoNk9mU05IWFJScXl3MzVvR1FPTnVvVjlGRG9ZRTJvYjNQUmJoYzB0TTFGa0xmbGtvV3ZQKwo="
+    }
+  }
+}

@@ -1,0 +1,6 @@
+﻿RST Q-Nation 200120401018
+© 2026 · Bold Askeri Teknoloji ve Savunma Sanayi A.Ş.
+
+Bu yazılım özel kullanım içindir. Tüm hakları saklıdır.
+Kaynak kodunun kopyalanması, dağıtılması veya değiştirilmesi
+yazılı izin olmaksızın yasaktır.

@@ -1,0 +1,16 @@
+[package]
+name = "anatolia-sim-desktop"
+version = "2.3.182"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1" }
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "1", features = ["process-command-api", "process-relaunch", "updater"] }
+

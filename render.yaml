@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: anatolia-sim
+    env: rust
+    rootDir: .
+    branch: main
+    plan: free
+    autoDeployTrigger: commit
+    # Delegates to the root build script (which runs build:wasm, then the
+    # client build, then cargo build -p sim-server, in that order) instead
+    # of duplicating those steps here -- this file used to inline them and
+    # silently drifted out of sync with package.json's own "build" script.
+    buildCommand: npm run build
+    startCommand: ./rust/target/release/sim-server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set in the Render dashboard (not this blueprint) to point at the
+      # managed Postgres instance -- this is how the pre-migration Node.js
+      # backend stayed persistent on the free plan without a paid disk.
+      # sim-server connects to it automatically when this is present; falls
+      # back to a local SQLite file (wiped on every deploy) only if unset.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      # Read access to this repo's releases/contents -- lets releases.rs
+      # keep serving Android/desktop update checks once this repo goes
+      # private (see AGENTS.md). Optional until then: unset, it just makes
+      # the same unauthenticated request that already worked while public.
+      - key: GITHUB_RELEASES_TOKEN
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      # Set in the Render dashboard (not this blueprint), matching
+      # ADMIN_USER_CODE/ADMIN_PASSWORD below -- previously committed here as
+      # a plaintext `value`, inconsistent with every other admin-related var.
+      # sync: false does not clear whatever is already configured in the
+      # dashboard; it only stops future blueprint syncs from managing it.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_SEED_TOKEN
+        generateValue: true
+      - key: ADMIN_USER_CODE
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

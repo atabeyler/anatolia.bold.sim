@@ -1,0 +1,148 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  core-tests:
+    name: Rust Core Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Testleri çalıştır
+        working-directory: rust
+        run: cargo test -p sim-core
+
+  clippy:
+    name: Rust Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Clippy'yi çalıştır
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  server-tests:
+    name: Rust Server Tests
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Testleri çalıştır
+        working-directory: rust
+        run: cargo test -p sim-server -- --test-threads=1 --nocapture
+
+  # Builds rust/sim-wasm for wasm32-unknown-unknown and generates its
+  # wasm-bindgen JS glue into client/src/wasmLocal/pkg -- that directory is
+  # gitignored (see .gitignore's own comment) and rebuilt fresh every run,
+  # exactly like a real `npm run build:wasm` would, so this crate can't
+  # silently bit-rot behind sim-core changes. client-tests below consumes
+  # the built package as an artifact since it needs to exist before that
+  # job's own `npm run build` (client/src/wasmLocal/worker.ts imports it).
+  #
+  # sim-wasm now depends on wasm-bindgen-rayon for real multi-threaded WASM
+  # (SharedArrayBuffer-backed rayon thread pool -- see its own Cargo.toml
+  # comment). That needs a pinned nightly toolchain with `-Z build-std`,
+  # which rust/sim-wasm/rust-toolchain.toml declares -- rustup auto-selects
+  # it for *any* cargo/rustc run with a working directory inside
+  # rust/sim-wasm, which is why the two steps below (both scoped to that
+  # directory) transparently run on that pinned nightly even though they
+  # don't say so explicitly. The `dtolnay/rust-toolchain@stable` step here
+  # only provides a baseline rustup/cargo -- it's no longer what actually
+  # builds sim-wasm's wasm32 target.
+  wasm-build:
+    name: Sim-Wasm Build & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/sim-wasm
+
+      - name: sim-wasm native testlerini çalıştır
+        working-directory: rust/sim-wasm
+        run: cargo test
+
+      - name: sim-wasm clippy
+        working-directory: rust/sim-wasm
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: wasm-bindgen-cli önbelleği
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/wasm-bindgen
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: wasm-bindgen-cli-0.2.126-${{ runner.os }}
+
+      - name: wasm32 paketini derle
+        run: npm run build:wasm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sim-wasm-pkg
+          path: client/src/wasmLocal/pkg
+          retention-days: 1
+
+  client-tests:
+    name: Client Tests
+    runs-on: ubuntu-latest
+    needs: wasm-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sim-wasm-pkg
+          path: client/src/wasmLocal/pkg
+
+      - name: Bağımlılıkları yükle
+        working-directory: client
+        run: npm ci
+
+      - name: Testleri çalıştır
+        working-directory: client
+        run: npm test
+
+      - name: Tip kontrolü ve build
+        working-directory: client
+        run: npm run build

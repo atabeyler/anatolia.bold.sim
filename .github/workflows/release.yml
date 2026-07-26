@@ -1,0 +1,129 @@
+name: Desktop Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  publish-windows:
+    name: Publish Windows Desktop
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    env:
+      RUST_BACKTRACE: 1
+      TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+      TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.0
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust
+            desktop/src-tauri
+
+      - name: Cache Tauri CLI
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-tauri.exe
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: ${{ runner.os }}-tauri-cli-v1
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^1" --locked
+
+      - name: Root build
+        run: npm run build
+
+      - name: Build Tauri bundle
+        working-directory: desktop/src-tauri
+        run: cargo tauri build
+
+      - name: Create release tag
+        shell: pwsh
+        run: |
+          # Desktop Release and Android Release both trigger on the same
+          # push and each try to create this same version tag -- whichever
+          # job's push wins is fine, the other's "reference already exists"
+          # rejection isn't a real failure, just proof someone else already
+          # did the job. Only a genuine inability to create *or* observe the
+          # tag afterward should fail the step.
+          $tag = "v${{ steps.version.outputs.version }}"
+          git fetch --tags
+          git rev-parse --verify --quiet $tag | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            git tag $tag
+            git push origin $tag
+            if ($LASTEXITCODE -ne 0) {
+              git fetch --tags
+              git rev-parse --verify --quiet $tag | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to create or observe tag $tag"
+              }
+            }
+          }
+
+      - name: Generate updater manifest
+        shell: pwsh
+        run: |
+          # The chooser page's checkUpdate() reads this file from the "latest"
+          # release. cargo tauri build only writes the .nsis.zip + .sig
+          # artifacts -- nothing before this ever assembled them into the
+          # latest.json the Tauri updater plugin actually fetches, so
+          # checkUpdate() always 404'd, was swallowed by its catch block, and
+          # the app silently never offered an update.
+          $version = "${{ steps.version.outputs.version }}"
+          $zip = Get-ChildItem -Path "desktop/src-tauri/target/release/bundle/nsis" -Filter "*.nsis.zip" | Select-Object -First 1
+          if (-not $zip) { throw "No .nsis.zip artifact found - updater target may not have run" }
+          $signature = (Get-Content -Path "$($zip.FullName).sig" -Raw).Trim()
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $manifest = [ordered]@{
+            version   = "v$version"
+            notes     = "Anatolia Sim v$version"
+            pub_date  = $pubDate
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $signature
+                url       = "https://github.com/atabeyler/anatolia-sim/releases/download/v$version/$($zip.Name)"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Out-File -FilePath "latest.json" -Encoding utf8
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Anatolia Sim v${{ steps.version.outputs.version }}
+          files: |
+            desktop/src-tauri/target/release/bundle/**/*
+            latest.json

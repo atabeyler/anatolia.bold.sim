@@ -1,0 +1,26 @@
+{
+  "name": "anatolia-sim",
+  "version": "2.3.182",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "npm run build:wasm && cd client && npm ci --include=dev && npm run build && cd ../rust && cargo build --release -p sim-server",
+    "build:wasm": "node scripts/build-wasm.mjs",
+    "desktop": "npm run build && cd desktop/src-tauri && cargo run",
+    "dist": "npm run build && cd desktop/src-tauri && cargo build --release",
+    "dist:mac": "npm run build && cd desktop/src-tauri && cargo build --release",
+    "dist:linux": "npm run build && cd desktop/src-tauri && cargo build --release",
+    "version:patch": "node scripts/sync-version.mjs patch",
+    "version:minor": "node scripts/sync-version.mjs minor",
+    "version:major": "node scripts/sync-version.mjs major",
+    "start": "npm run rust:serve",
+    "test": "cd rust && cargo test -p sim-server -- --test-threads=1 && cd ../client && npm test",
+    "rust:build": "node scripts/rust-cmd.mjs build",
+    "rust:test": "node scripts/rust-cmd.mjs test",
+    "rust:check": "node scripts/rust-cmd.mjs check",
+    "rust:serve": "node scripts/rust-cmd.mjs serve"
+  },
+  "devDependencies": {}
+}

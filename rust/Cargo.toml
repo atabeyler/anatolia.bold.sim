@@ -1,0 +1,19 @@
+[workspace]
+members = ["sim-core", "sim-server"]
+resolver = "2"
+
+# Render rebuilds this from a fresh checkout on every deploy (no persisted
+# target/ to make incremental compilation help), so opt-level=3's full
+# optimization pipeline is paid in full on every single deploy. opt-level=2
+# skips the most expensive optimization passes for a meaningfully faster
+# release build; the tick loop's own throttling/heavy-mode logic already
+# does more for real-world ms/tick than the last few points of -O3 do, so
+# this is a deploy-time win with only a marginal runtime cost.
+[profile.release]
+opt-level = 2
+# Confirmed via Render's own build logs: compressing + uploading the built
+# binary took ~92s on its own (73.7s compress + 18s upload), on top of the
+# ~4min compile. Stripping debug symbols shrinks the binary substantially,
+# cutting that compression/upload time directly -- doesn't touch compile
+# time or runtime behavior, just what gets packaged at the end.
+strip = true
