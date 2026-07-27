@@ -71,6 +71,27 @@ A group's accumulated astronomy knowledge (specifically the `seasonal_calendar` 
 QoL = consciousness×0.3 + (lang_stage/6)×0.2 + health×0.3 + wellbeing×0.2
 ```
 
+### Seasonal Fertility
+Once a community discovers `calendar`, conception odds get a further seasonal nudge (spring highest, winter lowest, ±8% bounded) layered on top of individual FSHR_01-driven fertility — a population with no calendar sees no seasonal pattern at all.
+
+### Genetic Bottleneck / Founder Effect
+When a group splits (fission), its small offshoot band breeds largely within itself and its gene pool can drift sharply from the wider population — the Genetic Diversity panel now breaks heterozygosity/allelic variance/inbreeding down per group so this divergence is directly visible, not just inferable.
+
+### Dialect Divergence
+Every group independently coins its own word for the same concept from the moment it splits off (word generation is seeded by group ID). The Language panel now shows an actual side-by-side vocabulary comparison across groups for shared concepts, rather than only describing the phenomenon.
+
+### Written Records (Writing Stage)
+Once an individual reaches the writing stage, a notable event of the day is committed to their own permanent memory, and any other literate group member can later "read" it from them — knowledge of a past event can now reach someone who never personally witnessed it, as long as both parties are literate.
+
+### Collective Trauma
+A disaster or conflict that hits an entire group on the same day leaves a markedly stronger heritable stress-reactivity imprint (via HPA-axis methylation) than one individual's private grief — descendants of disaster survivors carry a measurably stronger inherited stress response.
+
+### Learned Leadership Style
+A child whose living parent currently leads their group picks up a small, purely observational bias toward that parent's dominant behavior pattern — nudging (never assigning) which social role the child is more likely to eventually specialize into.
+
+### Cross-Simulation Migration
+An explicit, ownership-gated action lets a player carry one individual — full genome, phenotype, epigenome, language and all — from one of their own simulations into another as a new arrival, modeling real inter-population gene flow/migration.
+
 ---
 
 ## Tech Stack
@@ -144,7 +165,9 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 - **AI Analysis** — Generate narrative summaries of civilization progress
 - **Time Machine** — Save and jump back to any historical checkpoint
 - **Fast-Forward** — Skip ahead to a target year without watching every intermediate day
-- **Genealogy** — Visualize the founder family tree across generations
+- **Genealogy** — Visualize the founder family tree across generations; select any individual to see an auto-generated biography built from their tracked history
+- **Comparative Analysis** — Diff two of your own simulations' key stats side by side (population, language stage, technologies, consciousness, QoL)
+- **Cross-Simulation Migration** — Carry one individual, genome and all, from another simulation you own into the current one as a new arrival
 - **Reports** — Export a civilization's full history as JSON or a formatted PDF
 - **Performance Diagnostics** — Live tick timing, per-engine phase breakdown, DB status
 - **Live Watch** — Spectate any currently-running simulation, including ones on another device synced from local ("Yerel") mode
@@ -159,14 +182,14 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 | Population | Individual roster — alive/dead filter, sort, per-person compare |
 | Population Pyramid | Age pyramid, sex ratio, age-group breakdown |
 | Biology | Genome/gene expression, individual genetics, life stages |
-| Language | Stage, phonology, vocabulary, dialect divergence |
+| Language | Stage, phonology, vocabulary, per-group dialect comparison table |
 | Technology | Discovery tree by tier, discoverer stories |
 | Belief | Emerged belief systems (named/unnamed), ritual log |
 | Culture | Meme emergence, cultural prestige, meme-stage progression |
 | Psychology | Wellbeing, stress, consciousness, theory of mind, mood drivers |
 | Epigenetics | Methylation levels and inheritance rates (HPA, BDNF, OXTR, …) |
-| Genetic Diversity | Heterozygosity, allelic variance, effective population size, inbreeding trend |
-| Genealogy | Family tree from any selected root individual |
+| Genetic Diversity | Heterozygosity, allelic variance, effective population size, inbreeding trend, per-group founder-effect breakdown |
+| Genealogy | Family tree from any selected root individual, with an auto-generated biography |
 | Social | Groups, leadership changes, conflicts, social event log |
 | Economy | Wealth, Gini inequality index, resource levels, trade log |
 | Environment | Biome, season, weather metrics, disaster log |
@@ -178,8 +201,8 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 | Events | Filterable, searchable log of every simulation event |
 | Moments | Curated feed of noteworthy milestone events |
 | Hypothesis | AI-powered hypothesis testing against live data |
-| Analysis | AI chat for open-ended questions about the civilization |
-| God | Trigger disasters, alter or talk to individuals, quarantine toggle |
+| Analysis | AI chat for open-ended questions about the civilization, plus a two-simulation comparison tool |
+| God | Trigger disasters, alter or talk to individuals, quarantine toggle, cross-simulation migration |
 | Time Machine | Save and restore simulation checkpoints |
 | Report | Export full civilization history as JSON or PDF |
 | Performance | Engine tick timing, DB status, connection diagnostics |
@@ -196,6 +219,9 @@ The project draws on:
 - **Epigenetic inheritance** — BDNF, HPA axis, and OXTR methylation are heritable across 2 generations with configurable heritability coefficients
 - **Inbreeding coefficient** — Computed from shared grandparents; elevated inbreeding reduces phenotype fitness
 - **Cultural transmission fidelity** — Meme spread rate scales with group consciousness, modeling the observation that more cognitively complex societies transmit culture more faithfully
+- **X-linked recessive traits** — A hemophilia-like clotting-factor locus is modeled the same way real X-linked conditions are: sons express their single maternal allele directly, daughters need two low copies to show reduced clotting
+- **Founder effect / genetic bottleneck** — A small offshoot band's gene pool can drift sharply from the wider population once it breeds largely within itself, mirroring real island/colonization genetics
+- **Transgenerational epigenetic inheritance of trauma** — A collective (group-wide) disaster leaves a stronger heritable stress-reactivity imprint than one individual's private stress, echoing real research on inherited trauma responses
 
 ---
 

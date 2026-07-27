@@ -312,6 +312,26 @@ player at simulation creation (`create_founder`'s `name` param), matching the
 same "only the two founders may be given anything directly" carve-out the cardinal
 rule already makes for genome/appearance.
 
+**Dialect divergence:** `generate_proto_word(concept, group_id, palette)` is
+already seeded by `group_id`, so two bands independently coin different words
+for the same concept from the moment they split -- `language::get_vocabulary_by_group`
+surfaces this per-group vocabulary as `stats.vocabulary_by_group`
+(concept → word per group), rendered as a comparison table in
+LanguagePanel's "Dialect Divergence" section once more than one group exists.
+
+**Written records (writing stage):** once `language.writing` is true,
+`language::record_event_for_posterity(individual, event, sim_day)` commits a
+notable event of the day to a bounded (`MAX_WRITTEN_RECORDS = 50`) list in
+`individual.memory.written_records` -- called once per tick, in
+`tick::advance_one_day`, for every alive individual with writing, against
+that day's most notable event. `language::read_written_records(reader,
+source)` lets one literate individual "read" another literate individual's
+records (both must already have writing) during the normal observation-
+learning pass, merging in any records the reader doesn't already have --
+this is what lets a group member know about an event they never personally
+witnessed, extending observational learning across *time*, not just across
+individuals. Neither function ever grants the writing capability itself.
+
 ## Theory of Mind (Psychology)
 
 Tracked in `ind.psychology.theory_of_mind` (0–3). Advances via `update_mental_state()` in `psychology.rs`. Not a per-tick probability roll -- a deterministic accumulated-observation threshold. Every tick an individual is in a group, `_socialObservations` increments by 1; a level is reached once lang_stage/consciousness/IQ all clear their gate AND the running observation count reaches that level's threshold, scaled down by `tom_factor` (higher fluid_intelligence × empathy reaches the threshold sooner).
@@ -364,6 +384,12 @@ Triplet chance  = twinChance * 0.1
 Mother mortality= max(0.002, 0.06 * (1 - health_resilience) * (90 - min(max_lifespan, 90)) / 90)
 Neonatal risk   = max(0.005, motherRisk * 0.6)
 ```
+
+**Seasonal fertility (calendar-gated):** once a community has discovered
+`calendar`, `check_reproduction` applies a further seasonal multiplier to
+conception odds -- spring 1.08x, summer 1.03x, autumn 0.97x, winter 0.92x
+(neutral 1.0x before calendar is known). Bounded to a ±8% swing, layered on
+top of (never replacing) FSHR_01-driven individual fertility.
 
 ## Death Causes
 
@@ -502,6 +528,17 @@ Cardinal rule clarification: methylation responses are pre-programmed by the gen
 
 `apply_fx` (the only place methylation is allowed to touch `phenotype.{stress_reactivity,aggression,oxytocin_sensitivity,learning_rate,immune_strength}`) blends each trait toward its methylation-implied value by at most `EPIGENETIC_INFLUENCE` (0.25) of the gap to a fixed, birth-time genetic baseline (`snapshot_genetic_baseline`, stored in `individual.extra["_epi_genetic_baseline"]`), recomputed fresh every tick from that stored baseline -- never a `trait = trait*0.99 + target*0.01` running EMA. The earlier EMA form compounded daily and asymptotically erased the genetic starting value within about a year (half-life ~69 days), which defeated the "genetics drives individual variation" premise for these five traits; the bounded-blend form keeps epigenetics a modest, permanently-bounded modulation of genotype instead of an eventual full override.
 
+**Collective trauma / cultural memory:** `update_epigenome` distinguishes a
+*collective* trauma (a disaster/predator/conflict event logged the same day
+as the current tick, per `psychology.trauma_events`) from an ordinary
+individual "kin_death" entry or generic high stress -- a collective event
+applies a markedly larger `HPA_AXIS` methylation bump (+0.05 vs. +0.02 for
+plain stress). Since `HPA_AXIS` is heritable at 0.30, descendants of
+disaster survivors carry a measurably stronger inherited stress-reactivity
+shift than descendants of individuals who were merely stressed alone --
+a "cultural memory" of the event encoded purely through the existing
+epigenetic inheritance pathway, not a new mechanism.
+
 ## Genome — 32 Loci & Phenotype Traits
 
 Each locus carries a real chromosome annotation (`genome.rs`'s `LOCI` table), but `create_gamete`'s coin-flip for "which parental copy does this gamete inherit" is keyed by **linkage group** (`genome.rs::linkage_group`), not by that chromosome annotation. Real recombination frequency depends on physical distance, not merely sharing a chromosome number -- most of this table's same-chromosome pairs are tens of megabases apart in reality and recombine at close to 50% per meiosis, i.e. assort almost independently. Only `LINKED_CLUSTERS` (currently just `IMMUNE_01`/`IMMUNE_02`, modeling the real, physically tight MHC/HLA immune complex) always co-segregate as a block; every other locus -- including the former chromosome-7 (FOXP2_01/CNTNAP2_01/RELN_01) and chromosome-11 (BDNF_01/DRD4_01/STRENGTH_01/DRD2_01/ACTN3_01) clusters, and HERC2_01/SLC24A5_01 on chromosome 15 -- now gets its own independent 50/50 flip. This replaced an earlier "full linkage within any shared chromosome" model, which force-clustered several highly visible trait groups (eye color always co-inherited with skin tone, all five chromosome-11 cognitive/physical traits always co-inherited as one block) and measurably understated real per-individual genetic diversity. Mutation is still rolled independently per locus regardless of linkage group.
@@ -516,6 +553,7 @@ Each locus carries a real chromosome annotation (`genome.rs`'s `LOCI` table), bu
 `DRD2_01 AVPR1A_01 ACTN3_01 ADRA2B_01 CACNA1C_01` (motivation/bonding/memory)
 `FSHR_01` (fertility)
 `HERC2_01 MC1R_01 SLC24A5_01` (appearance)
+`CLOT_01` (clotting factor, X-linked -- hemophilia-like; low value feeds a small bleeding-risk multiplier in `mortality.rs`, exposed as `phenotype.extra.clotting_factor`)
 
 ### Key Phenotype Traits (computed by `computePhenotype()`)
 `fluid_intelligence working_memory conscientiousness learning_rate neural_plasticity`
@@ -550,6 +588,16 @@ STRENGTH_01(0.78/0.75) ACTN3_01(0.76/0.74) FSHR_01(0.70/0.68)
 6 relationship types: `KIN MATE ALLY RIVAL NEUTRAL OUTGROUP`
 Features: group fission on dissent, leadership contests, intergroup conflict.
 
+**Learned leadership style:** `social::observe_leadership_style` gives a
+juvenile (below `JUVENILE_MAX_AGE_YEARS`, 13) whose living parent currently
+leads their group a small, purely observational bias: +1 per tick to
+whichever `_behaviorCounts` action their leader-parent's own tally shows as
+dominant. This never assigns a role directly -- the child still needs to
+independently reach `compute_role_for`'s real `MIN_SPECIALIZATION_COUNT` (5)
+before any role sticks; it only tips which action that eventually is toward
+what their leader-parent modeled. Founders are never affected (they have no
+parent to observe in this sense).
+
 ## Movement System
 
 Movement angle is influenced (in order) by: survival stress (hunger/thirst) → band centroid cohesion (only during `mate`/`socialize` actions) → food memory → mating drive → water fear avoidance. Behavioral, not physics-based. `_lastLandX/Y` panic-return (HP < 0.6 in water) and `_goodFoodAngle` are not yet implemented.
@@ -570,16 +618,38 @@ Movement angle is influenced (in order) by: survival stress (hunger/thirst) → 
 **Advanced:** `SocialPanel EconomyPanel ArchitecturePanel LawPanel AstronomyPanel ArtPanel MicrobiomePanel`
 **Experimental:** `HypothesisPanel GodPanel GenealogyPanel AnalysisPanel TimeMachinePanel ReportPanel MomentsPanel PerformancePanel`
 
+No new panel was added for the ten feature extensions below -- each extends
+an existing panel instead:
+- `GeneticDiversityPanel` — per-group genetic drift table (`stats.genetic_diversity_by_group`), surfacing founder-effect/bottleneck divergence once groups exist.
+- `LanguagePanel` — per-group vocabulary comparison table (`stats.vocabulary_by_group`) inside the existing "Dialect Divergence" section.
+- `GenealogyPanel` — a data-derived biography paragraph for the selected individual (birth/death year, generation, language stage, role), built client-side from already-tracked fields, no LLM call.
+- `AnalysisPanel` — a "Comparative Experiment Analysis" section calling `GET /api/simulations/compare` to diff two owned simulations' stats side by side.
+- `GodPanel` — a "Cross-Simulation Migration" section calling `POST /api/god/:id/migrate-individual`.
+
 ## API Routes
 
 ```
 /api/auth        — login, register
 /api/simulations — create, start, pause, get state, checkpoint, time machine
+                   /compare — read-only side-by-side stats for two owned simulations (?a=&b=)
 /api/god         — founder interventions (God Mode)
+                   /:simId/migrate-individual — cross-simulation migration/gene flow (see below)
 /api/aria        — AI hypothesis evaluation
 /api/analysis    — statistical analysis
 /api/admin       — seed-admin
 ```
+
+**Cross-simulation migration:** `POST /api/god/:simId/migrate-individual`
+(`god::migrate_individual`, body `{ source_simulation_id, individual_id }`)
+carries one living individual's genome/phenotype/epigenome/language/skills/
+beliefs verbatim from another simulation the same user (or an admin) owns
+into this one as a new arrival, via `sim_core::migrate_individual_arrival`.
+Parent ids and group membership are severed (the source simulation's
+genealogy/groups don't exist here), health/psychology/memory reset to a
+fresh-arrival baseline, and the arrival never gets `is_founder` -- an
+explicit, rare player action, never anything the tick loop triggers on its
+own. Requires ownership of *both* simulations, so this can never exfiltrate
+another user's simulation data.
 
 ## Tick error recovery (`runtime.rs`)
 
