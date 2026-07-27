@@ -25,6 +25,7 @@ interface CheckpointRow {
 export default function GeneticDiversityPanel() {
   const { currentSim, accessToken, lang, stats, activePanel } = useSimStore();
   const gd = stats?.genetic_diversity;
+  const byGroup = stats?.genetic_diversity_by_group;
   const [history, setHistory] = useState<CheckpointRow[]>([]);
 
   useEffect(() => {
@@ -124,6 +125,48 @@ export default function GeneticDiversityPanel() {
           </p>
         )}
       </div>
+
+      {byGroup && Object.keys(byGroup).length > 1 && (
+        <div>
+          <h4 className="text-sim-gold text-sm font-semibold uppercase tracking-widest mb-2">
+            {t(lang, 'Gruplar Arası Genetik Sapma (Kurucu Etkisi)', 'Genetic Drift Between Groups (Founder Effect)', 'Genetische Drift zwischen Gruppen', 'Dérive génétique entre groupes', 'الانحراف الجيني بين المجموعات')}
+          </h4>
+          <p className="text-sim-muted text-sm italic mb-2">
+            {t(
+              lang,
+              'Bir grup fisyonla ayrıldığında, küçük alt grup kendi içinde çiftleşmeye başlar ve gen havuzu ana popülasyondan hızla sapabilir -- gerçek bir genetik darboğaz/kurucu etkisi.',
+              'Once a group splits off, a small offshoot band breeds largely within itself and its gene pool can drift sharply from the wider population -- a real genetic bottleneck / founder effect.',
+              'Sobald sich eine Gruppe abspaltet, kann ihr Genpool stark vom Rest der Bevölkerung abweichen -- ein echter genetischer Engpass.',
+              'Une fois qu\'un groupe se sépare, son bassin génétique peut dériver fortement -- un véritable goulot d\'étranglement génétique.',
+              'بمجرد انفصال مجموعة، يمكن أن ينحرف مجمعها الجيني بشدة -- اختناق جيني حقيقي.'
+            )}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-sim-muted text-left border-b border-sim-border">
+                  <th className="py-1 pr-2">{t(lang, 'Grup', 'Group')}</th>
+                  <th className="py-1 pr-2">{t(lang, 'Heterozigotluk', 'Heterozygosity')}</th>
+                  <th className="py-1 pr-2">{t(lang, 'Alel Varyansı', 'Allelic Var.')}</th>
+                  <th className="py-1">{t(lang, 'Akrabalık', 'Inbreeding')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(byGroup).map(([groupId, g]) => (
+                  <tr key={groupId} className="border-b border-sim-border/40">
+                    <td className="py-1 pr-2 font-mono text-xs">{groupId.slice(0, 8)}</td>
+                    <td className="py-1 pr-2">{Math.round(g.avg_heterozygosity * 100)}%</td>
+                    <td className="py-1 pr-2">{g.allelic_variance.toFixed(3)}</td>
+                    <td className="py-1" style={{ color: g.avg_inbreeding_coefficient > 0.1 ? '#e05a5a' : undefined }}>
+                      {Math.round(g.avg_inbreeding_coefficient * 100)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </DetailPanel>
   );
 }

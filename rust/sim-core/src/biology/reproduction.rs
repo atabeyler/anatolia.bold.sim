@@ -25,12 +25,15 @@ const MAX_MATE_CANDIDATE_SCAN: usize = 50;
 // create_child, called on the one selected pair, needs their full data,
 // which a reference already provides), so there was never a need to own
 // clones of the whole scanned population just to filter/pair over it.
+#[allow(clippy::too_many_arguments)]
 pub fn check_reproduction(
     population: &[&Individual],
     current_day: i32,
     simulation_id: &str,
     community_lang_stage: i32,
     genealogy: &GenealogyIndex,
+    season: &str,
+    calendar_known: bool,
 ) -> Vec<Individual> {
     let mut newborns = Vec::new();
     let fertile_males: Vec<&Individual> = population
@@ -55,7 +58,7 @@ pub fn check_reproduction(
             continue;
         }
         let male = nearby_males[rand::thread_rng().gen_range(0..nearby_males.len())];
-        let p = conception_probability(female, male, current_day, community_lang_stage, genealogy);
+        let p = (conception_probability(female, male, current_day, community_lang_stage, genealogy) * seasonal_fertility_multiplier(season, calendar_known)).clamp(0.0, 1.0);
         if rand::random::<f64>() < p {
             let due_day = current_day + PREGNANCY_MIN + rand::thread_rng().gen_range(0..14);
             let child = create_child(female, male, due_day, simulation_id);
@@ -114,6 +117,26 @@ fn conception_probability(female: &Individual, male: &Individual, current_day: i
     // pull rather than something that can stall population growth on its own.
     let demographic_transition = 1.0 - (community_lang_stage.clamp(0, 6) as f64 / 6.0) * 0.3;
     ((fertility * age_factor + mhc_bonus - inbreed_penalty * 0.5) * 0.09 * urge_factor * demographic_transition).clamp(0.0, 1.0)
+}
+
+/// A small seasonal nudge to conception odds, gated on the community having
+/// actually discovered `calendar` (tracking the seasons) -- without that
+/// knowledge, a population's own conception timing has no way to correlate
+/// with the calendar year, so the multiplier stays neutral. Bounded to a
+/// +/-8% swing around 1.0: a real but modest demographic effect, mirroring
+/// the well-documented seasonal birth clustering seen in real hunter-
+/// gatherer and agrarian populations, layered on top of (never replacing)
+/// FSHR_01-driven individual fertility.
+fn seasonal_fertility_multiplier(season: &str, calendar_known: bool) -> f64 {
+    if !calendar_known {
+        return 1.0;
+    }
+    match season {
+        "spring" => 1.08,
+        "summer" => 1.03,
+        "autumn" => 0.97,
+        _ => 0.92,
+    }
 }
 
 /// Daily accumulation of an individual's own mating drive, purely from their
@@ -212,7 +235,7 @@ mod tests {
         let genealogy = empty_genealogy();
         let mut conceived = false;
         for day in 0..1000 {
-            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy);
+            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false);
             if !newborns.is_empty() {
                 conceived = true;
                 break;
@@ -228,7 +251,7 @@ mod tests {
         female.health.pregnancy = Some(0);
         let genealogy = empty_genealogy();
         for day in 0..200 {
-            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy);
+            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false);
             assert!(newborns.is_empty(), "a pregnant female must never conceive again");
         }
     }
@@ -239,7 +262,7 @@ mod tests {
         let female = founder_at("female", 0.0);
         let genealogy = empty_genealogy();
         for day in 0..500 {
-            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy);
+            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false);
             assert!(newborns.is_empty());
         }
     }
@@ -251,7 +274,7 @@ mod tests {
         young_female.x = 0.0;
         let genealogy = empty_genealogy();
         for day in 0..500 {
-            let newborns = check_reproduction(&[&male, &young_female], day, "sim1", 0, &genealogy);
+            let newborns = check_reproduction(&[&male, &young_female], day, "sim1", 0, &genealogy, "spring", false);
             assert!(newborns.is_empty());
         }
     }
@@ -380,6 +403,29 @@ mod tests {
     fn twin_chance_for_low_fertility_stays_at_or_near_the_floor() {
         let chance = (0.003 + (0.1 - 0.3) * 0.07f64).max(0.0);
         assert!((0.0..0.003).contains(&chance));
+    }
+
+    // ── seasonal fertility (calendar-gated) ─────────────────────────────
+
+    #[test]
+    fn seasonal_multiplier_is_neutral_without_calendar_knowledge() {
+        for season in ["spring", "summer", "autumn", "winter"] {
+            assert_eq!(seasonal_fertility_multiplier(season, false), 1.0);
+        }
+    }
+
+    #[test]
+    fn spring_raises_and_winter_lowers_conception_odds_once_calendar_is_known() {
+        assert!(seasonal_fertility_multiplier("spring", true) > 1.0);
+        assert!(seasonal_fertility_multiplier("winter", true) < 1.0);
+    }
+
+    #[test]
+    fn seasonal_multiplier_stays_within_a_bounded_eight_percent_swing() {
+        for season in ["spring", "summer", "autumn", "winter"] {
+            let m = seasonal_fertility_multiplier(season, true);
+            assert!((0.9..=1.1).contains(&m), "{season} multiplier {m} out of expected bounds");
+        }
     }
 
     // ── H-07 regression — update_mating_urge age alignment ─────────────

@@ -29,6 +29,9 @@ export default function GodPanel() {
   const [population, setPopulation] = useState<any[]>([]);
   const [selectedIndId, setSelectedIndId] = useState('');
   const [quarantine, setQuarantine] = useState(false);
+  const [migrateSourceSimId, setMigrateSourceSimId] = useState('');
+  const [migrateIndividualId, setMigrateIndividualId] = useState('');
+  const [migrateStatus, setMigrateStatus] = useState('');
 
   useEffect(() => {
     if (!currentSim || !accessToken) return;
@@ -41,7 +44,7 @@ export default function GodPanel() {
     if (!currentSim) return;
     try {
       const { data } = await axios.post(`/api/god/${currentSim.id}/intervene`, { type, params, user_note: `Manual: ${type}` }, { headers: { Authorization: `Bearer ${accessToken}` } });
-      setStatus(`✓ ${data.affected} ${text(lang as LangCode, { tr: 'etkilendi', en: 'affected', de: 'betroffen', fr: 'affectés', ar: 'متأثر' })} · ${data.deaths} ${text(lang as LangCode, { tr: 'öldü', en: 'died', de: 'gestorben', fr: 'décédés', ar: 'ماتوا' })}`);
+      setStatus(`✓ ${data.affected_individuals} ${text(lang as LangCode, { tr: 'etkilendi', en: 'affected', de: 'betroffen', fr: 'affectés', ar: 'متأثر' })} · ${data.deaths} ${text(lang as LangCode, { tr: 'öldü', en: 'died', de: 'gestorben', fr: 'décédés', ar: 'ماتوا' })}`);
     } catch { setStatus(`✗ ${text(lang as LangCode, { tr: 'Başarısız (simülasyon çalışmıyor olabilir)', en: 'Failed (simulation may not be running)', de: 'Fehlgeschlagen (Simulation läuft möglicherweise nicht)', fr: "Échec (la simulation n'est peut-être pas en cours)", ar: 'فشل (قد لا تكون المحاكاة قيد التشغيل)' })}`); }
     setTimeout(() => setStatus(''), 4000);
   }
@@ -90,6 +93,23 @@ export default function GodPanel() {
       setResponse(data.response);
     } catch { setResponse('...'); }
     setChatLoading(false);
+  }
+
+  async function migrateIndividual() {
+    if (!currentSim || !migrateSourceSimId.trim() || !migrateIndividualId.trim()) return;
+    setMigrateStatus('…');
+    try {
+      const { data } = await axios.post(
+        `/api/god/${currentSim.id}/migrate-individual`,
+        { source_simulation_id: migrateSourceSimId.trim(), individual_id: migrateIndividualId.trim() },
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      setMigrateStatus(`✓ ${text(lang as LangCode, { tr: 'Yeni birey geldi', en: 'New arrival' })}: ${data.arrived_individual_id.slice(0, 8)}`);
+      refreshPopulation();
+    } catch (err: any) {
+      setMigrateStatus(`✗ ${err?.response?.data?.error ?? text(lang as LangCode, { tr: 'Başarısız', en: 'Failed' })}`);
+    }
+    setTimeout(() => setMigrateStatus(''), 5000);
   }
 
   const selectedInd = population.find(i => i.id === selectedIndId);
@@ -219,6 +239,41 @@ export default function GodPanel() {
               : text(lang as LangCode, { en: 'Quarantine: OFF', tr: 'Karantina: KAPALI', de: 'Quarantäne: AUS', fr: 'Quarantaine: INACTIVE', ar: 'الحجر الصحي: غير نشط' })}
           </span>
         </button>
+      </div>
+
+      {/* Cross-Simulation Migration */}
+      <div className="mb-4">
+        <h4 className="text-sim-gold text-sm font-semibold uppercase tracking-widest mb-2 flex items-center gap-1.5">
+          {text(lang as LangCode, { en: 'Cross-Simulation Migration', tr: 'Simülasyonlar Arası Göç', de: 'Simulationsübergreifende Migration', fr: 'Migration inter-simulations', ar: 'الهجرة بين المحاكاة' })}
+        </h4>
+        <p className="text-sim-muted text-sm italic mb-2">
+          {text(lang as LangCode, {
+            tr: 'Sahip olduğunuz başka bir simülasyondan bir bireyi (tüm genomu ile) buraya yeni bir gelen olarak taşıyın.',
+            en: 'Bring one individual (full genome and all) from another simulation you own into this one as a new arrival.',
+          })}
+        </p>
+        <input
+          value={migrateSourceSimId}
+          onChange={e => setMigrateSourceSimId(e.target.value)}
+          placeholder={text(lang as LangCode, { tr: 'Kaynak simülasyon ID', en: 'Source simulation ID' })}
+          className="w-full bg-sim-bg border border-sim-border rounded px-2 py-1 text-sm text-sim-text focus:border-sim-accent focus:outline-none mb-1.5"
+          style={{ fontSize: 12 }}
+        />
+        <input
+          value={migrateIndividualId}
+          onChange={e => setMigrateIndividualId(e.target.value)}
+          placeholder={text(lang as LangCode, { tr: 'Birey ID', en: 'Individual ID' })}
+          className="w-full bg-sim-bg border border-sim-border rounded px-2 py-1 text-sm text-sim-text focus:border-sim-accent focus:outline-none mb-1.5"
+          style={{ fontSize: 12 }}
+        />
+        <button
+          onClick={migrateIndividual}
+          disabled={!migrateSourceSimId.trim() || !migrateIndividualId.trim()}
+          className="w-full px-3 py-1.5 bg-sim-surface hover:bg-sim-border rounded-lg text-sm text-sim-text transition-colors disabled:opacity-40 border border-sim-border hover:border-sim-accent/40"
+        >
+          {text(lang as LangCode, { tr: 'Göç Ettir', en: 'Migrate' })}
+        </button>
+        {migrateStatus && <div className="mt-1.5 text-sim-muted text-center" style={{ fontSize: 12 }}>{migrateStatus}</div>}
       </div>
 
       <div className="text-sm text-sim-muted text-center pt-2 border-t border-sim-border/30">

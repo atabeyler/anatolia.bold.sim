@@ -291,6 +291,57 @@ pub fn create_child(parent1: &Individual, parent2: &Individual, birth_day: i32, 
     individual
 }
 
+/// Builds a new arrival individual for a *different* simulation than the one
+/// `source` currently lives in -- cross-simulation migration/gene flow, an
+/// explicit, rare player action (see sim-server's `god::migrate_individual`),
+/// never something the tick loop triggers on its own. Every genetically
+/// inherited field -- genome, phenotype, epigenome, language, skills,
+/// beliefs -- carries over verbatim; that transfer is the entire point of
+/// the feature. Parent ids and group membership are severed (the source
+/// simulation's genealogy index and groups don't exist in the target, and
+/// keeping a parent id would leave a foreign key pointing at a row in the
+/// wrong simulation), and health/psychology/memory reset to a fresh-arrival
+/// baseline the same way any newcomer would after a long journey. This never
+/// sets `is_founder` and never grants any behavior beyond what a normal
+/// adult individual already has.
+pub fn migrate_individual_arrival(source: &Individual, source_current_day: i32, target_current_day: i32) -> Individual {
+    let age_days_at_source = (source_current_day - source.birth_day).max(0);
+    Individual {
+        id: Uuid::new_v4().to_string(),
+        simulation_id: None,
+        birth_day: target_current_day - age_days_at_source,
+        death_day: None,
+        alive: true,
+        is_dead: false,
+        is_founder: false,
+        sex: source.sex.clone(),
+        x: source.x,
+        y: source.y,
+        age_days: None,
+        generation: source.generation,
+        group_id: None,
+        home_x: Some(source.x),
+        home_y: Some(source.y),
+        parent_1_id: None,
+        parent_2_id: None,
+        known_techs: source.known_techs.clone(),
+        genome: source.genome.clone(),
+        phenotype: source.phenotype.clone(),
+        epigenome: source.epigenome.clone(),
+        health: default_health(0.6, 0.6, source.phenotype.immune_strength),
+        mind: default_mind(age_days_at_source),
+        social: default_social(),
+        skills: source.skills.clone(),
+        beliefs: source.beliefs.clone(),
+        language: source.language.clone(),
+        memory: Value::Null,
+        psychology: default_psychology(),
+        inventory: HashMap::new(),
+        inbreeding_coeff: Some(0.0),
+        extra: Map::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

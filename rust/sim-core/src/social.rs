@@ -492,6 +492,39 @@ pub fn compute_role_for(member: &Individual, leader_id: Option<&str>) -> &'stati
     }
 }
 
+/// A juvenile whose parent currently leads their group observes that
+/// parent's behavioral pattern and picks up a small, purely observational
+/// bias toward it -- exactly the same `_behaviorCounts` tally
+/// `compute_role_for` already reads to decide roles, just nudged by one
+/// extra count per tick while the child is young enough to still be
+/// dependent (mirrors the juvenile movement pull toward a living parent,
+/// see AGENTS.md's Movement System section) and their parent is the group's
+/// leader. This never assigns a role directly -- the child must still
+/// independently rack up the real `MIN_SPECIALIZATION_COUNT` in
+/// `compute_role_for` before any role sticks; it only tips which action
+/// that eventually is toward what their leader-parent modeled.
+pub fn observe_leadership_style(individual: &mut Individual, leader_behavior_by_id: &std::collections::HashMap<String, Value>, juvenile_max_age_years: f64) {
+    if individual.is_founder {
+        return;
+    }
+    let age_years = individual.age_days.unwrap_or(0) as f64 / 365.0;
+    if age_years >= juvenile_max_age_years {
+        return;
+    }
+    let parent_counts = [&individual.parent_1_id, &individual.parent_2_id]
+        .into_iter()
+        .filter_map(|p| p.as_ref())
+        .find_map(|pid| leader_behavior_by_id.get(pid));
+    let Some(dominant_action) = parent_counts.and_then(Value::as_object).and_then(|counts| counts.iter().max_by_key(|(_, v)| v.as_i64().unwrap_or(0)).map(|(k, _)| k.clone())) else {
+        return;
+    };
+    let entry = individual.extra.entry("_behaviorCounts".to_string()).or_insert_with(|| json!({}));
+    if let Some(obj) = entry.as_object_mut() {
+        let current = obj.get(&dominant_action).and_then(Value::as_i64).unwrap_or(0);
+        obj.insert(dominant_action, json!(current + 1));
+    }
+}
+
 pub fn assign_group_roles(members: &mut [Individual], leader_id: Option<&str>) {
     for member in members {
         let role = compute_role_for(member, leader_id);
@@ -507,6 +540,44 @@ mod tests {
         let mut m = Individual { age_days: Some(365 * 25), ..Default::default() };
         m.extra.insert("_behaviorCounts".to_string(), json!({ dominant_action: 50, "socialize": 1 }));
         m
+    }
+
+    // ── observe_leadership_style ────────────────────────────────────────
+
+    #[test]
+    fn a_juvenile_whose_parent_leads_picks_up_a_bias_toward_the_parents_dominant_action() {
+        let leader_behavior_by_id: HashMap<String, Value> = [("leader-1".to_string(), json!({ "hunt": 50, "forage": 2 }))].into_iter().collect();
+        let mut child = Individual { age_days: Some(365 * 5), parent_1_id: Some("leader-1".to_string()), ..Default::default() };
+        social_observe(&mut child, &leader_behavior_by_id);
+        assert_eq!(child.extra.get("_behaviorCounts").and_then(|v| v.get("hunt")).and_then(Value::as_i64), Some(1));
+    }
+
+    #[test]
+    fn an_adult_no_longer_dependent_on_a_parent_is_unaffected() {
+        let leader_behavior_by_id: HashMap<String, Value> = [("leader-1".to_string(), json!({ "hunt": 50 }))].into_iter().collect();
+        let mut adult = Individual { age_days: Some(365 * 20), parent_1_id: Some("leader-1".to_string()), ..Default::default() };
+        social_observe(&mut adult, &leader_behavior_by_id);
+        assert!(adult.extra.get("_behaviorCounts").is_none());
+    }
+
+    #[test]
+    fn a_child_whose_parent_is_not_a_leader_is_unaffected() {
+        let leader_behavior_by_id: HashMap<String, Value> = [("someone-else".to_string(), json!({ "hunt": 50 }))].into_iter().collect();
+        let mut child = Individual { age_days: Some(365 * 5), parent_1_id: Some("not-a-leader".to_string()), ..Default::default() };
+        social_observe(&mut child, &leader_behavior_by_id);
+        assert!(child.extra.get("_behaviorCounts").is_none());
+    }
+
+    #[test]
+    fn founders_are_never_affected_by_leadership_observation() {
+        let leader_behavior_by_id: HashMap<String, Value> = [("leader-1".to_string(), json!({ "hunt": 50 }))].into_iter().collect();
+        let mut founder = Individual { is_founder: true, age_days: Some(365 * 5), parent_1_id: Some("leader-1".to_string()), ..Default::default() };
+        social_observe(&mut founder, &leader_behavior_by_id);
+        assert!(founder.extra.get("_behaviorCounts").is_none());
+    }
+
+    fn social_observe(ind: &mut Individual, leader_behavior_by_id: &HashMap<String, Value>) {
+        observe_leadership_style(ind, leader_behavior_by_id, 13.0);
     }
 
     #[test]

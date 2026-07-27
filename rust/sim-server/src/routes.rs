@@ -124,6 +124,42 @@ pub fn simulation_routes() -> Router<AppState> {
         .route("/:id/fast-forward/cancel", post(cancel_fast_forward))
         .route("/:id/terminate", post(terminate_simulation))
         .route("/:id", axum::routing::delete(delete_simulation_route))
+        .route("/compare", get(compare_simulations))
+}
+
+/// `?a=<simId>&b=<simId>` -- side-by-side aggregate stats for two
+/// simulations the caller owns (or is admin over), meant for comparing e.g.
+/// two different founder-genome experiments' emergent outcomes. Read-only,
+/// purely a projection of each simulation's own already-tracked stats via
+/// `derive_stats` -- computes nothing new about any individual.
+#[derive(serde::Deserialize)]
+struct CompareQuery {
+    a: String,
+    b: String,
+}
+
+async fn compare_simulations(State(state): State<AppState>, Query(params): Query<CompareQuery>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if let Err(resp) = authorize_sim_access(&state, &headers, &params.a).await {
+        return resp;
+    }
+    if let Err(resp) = authorize_sim_access(&state, &headers, &params.b).await {
+        return resp;
+    }
+    let sim_a = match load_live_or_full_state(&state, &params.a).await {
+        Ok(Some(sim)) => sim,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "simulation a not found"}))).into_response(),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    };
+    let sim_b = match load_live_or_full_state(&state, &params.b).await {
+        Ok(Some(sim)) => sim,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "simulation b not found"}))).into_response(),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    };
+    Json(json!({
+        "a": { "id": params.a, "name": sim_a.name, "stats": derive_stats(&sim_a) },
+        "b": { "id": params.b, "name": sim_b.name, "stats": derive_stats(&sim_b) },
+    }))
+    .into_response()
 }
 
 // Render injects RENDER_GIT_COMMIT (the deployed commit's full SHA) into

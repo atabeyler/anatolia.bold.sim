@@ -432,6 +432,42 @@ export default function LanguagePanel() {
               ar: `${stats.word_count ?? 0} كلمة فريدة موزعة على ${stats.groups} مجموعة. تطوّر المجموعات المعزولة تحولات صوتية متمايزة عبر الأجيال.`,
             })}
           </p>
+          {(() => {
+            const byGroup = stats.vocabulary_by_group ?? {};
+            const groupIds = Object.keys(byGroup);
+            if (groupIds.length < 2) return null;
+            // Concepts at least two groups have each independently coined a
+            // word for -- this is the actual per-group data the illustrative
+            // bar above only gestures at.
+            const sharedConcepts = Object.keys(byGroup[groupIds[0]] ?? {}).filter(
+              concept => groupIds.filter(g => byGroup[g]?.[concept]).length >= 2
+            );
+            if (sharedConcepts.length === 0) return null;
+            return (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-sim-muted text-left border-b border-sim-border/40">
+                      <th className="py-1 pr-2">{text(lang as LangCode, { en: 'Concept', tr: 'Kavram', de: 'Konzept', fr: 'Concept', ar: 'مفهوم' })}</th>
+                      {groupIds.slice(0, 4).map(g => (
+                        <th key={g} className="py-1 pr-2 font-mono">{g.slice(0, 6)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sharedConcepts.slice(0, 8).map(concept => (
+                      <tr key={concept} className="border-b border-sim-border/20">
+                        <td className="py-1 pr-2">{concept}</td>
+                        {groupIds.slice(0, 4).map(g => (
+                          <td key={g} className="py-1 pr-2 font-mono text-sim-text">{byGroup[g]?.[concept] ?? '—'}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
       )}
 

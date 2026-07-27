@@ -38,6 +38,12 @@ const LOCI: &[(&str, &str, &str, &str)] = &[
     ("HERC2_01", "15", "eye_color", "dominant"),
     ("MC1R_01", "16", "hair_color", "codominant"),
     ("SLC24A5_01", "15", "skin_pigmentation", "dominant"),
+    // X-linked clotting-factor locus (a hemophilia-like recessive trait,
+    // modeled the same way MAOA_01 already is): sons express their single
+    // maternal allele directly (hemizygous), daughters need two low copies
+    // to show reduced clotting. See mortality.rs for the small bleeding-risk
+    // effect this feeds, and compute_phenotype below for how it's exposed.
+    ("CLOT_01", "X", "clotting_factor", "x_linked"),
 ];
 
 /// Real recombination frequency between two loci depends on their physical
@@ -261,6 +267,9 @@ pub fn compute_phenotype(genome: &Genome) -> Phenotype {
     let belief_capacity = ((consciousness_potential - 0.1) / 0.9).max(0.0);
     let immune_strength = (g("IMMUNE_01") + g("IMMUNE_02")) / 2.0;
     let max_lifespan = 50.0 + g("TERT_01") * 50.0 + g("APOE_01") * 20.0;
+    let clotting_factor = g("CLOT_01");
+    let mut extra = Map::new();
+    extra.insert("clotting_factor".to_string(), serde_json::json!(clotting_factor));
 
     Phenotype {
         name: None,
@@ -312,7 +321,7 @@ pub fn compute_phenotype(genome: &Genome) -> Phenotype {
         eye_color: if g("HERC2_01") > 0.5 { "brown" } else { "blue" }.to_string(),
         hair_color: if g("MC1R_01") > 0.6 { "dark" } else if g("MC1R_01") > 0.3 { "medium" } else { "light" }.to_string(),
         skin_tone: g("SLC24A5_01"),
-        extra: Default::default(),
+        extra,
     }
 }
 
@@ -467,6 +476,23 @@ pub fn compute_genetic_diversity(population: &[&crate::state::Individual]) -> Va
         "effective_population_size": (effective_population_size * 10.0).round() / 10.0,
         "avg_inbreeding_coefficient": (avg_inbreeding_coefficient * 1000.0).round() / 1000.0,
     })
+}
+
+/// Per-group breakdown of `compute_genetic_diversity`, used to surface
+/// founder-effect / genetic-bottleneck drift once a population has split
+/// into multiple bands (see `social::process_group_dynamics` fission): each
+/// group's own allelic variance and inbreeding coefficient can diverge
+/// sharply from the population-wide average once a small offshoot band
+/// breeds largely within itself. Purely a read-only projection of existing
+/// genome/genealogy data -- computes nothing new about any individual.
+pub fn compute_genetic_diversity_by_group(population: &[&crate::state::Individual]) -> Value {
+    let mut by_group: HashMap<&str, Vec<&crate::state::Individual>> = HashMap::new();
+    for ind in population {
+        if let Some(gid) = ind.group_id.as_deref() {
+            by_group.entry(gid).or_default().push(ind);
+        }
+    }
+    by_group.into_iter().map(|(gid, members)| (gid.to_string(), compute_genetic_diversity(&members))).collect::<Map<String, Value>>().into()
 }
 
 #[cfg(test)]
@@ -974,6 +1000,37 @@ mod tests {
         let stats = compute_genetic_diversity(&refs);
         // Ne = 4*Nm*Nf/(Nm+Nf) = 4*3*1/4 = 3.0
         assert_eq!(stats["effective_population_size"], 3.0);
+    }
+
+    #[test]
+    fn compute_phenotype_exposes_clotting_factor_from_the_x_linked_clot_locus() {
+        let mut overrides = Map::new();
+        overrides.insert("CLOT_01".to_string(), serde_json::json!({ "a1": 0.2, "a2": 0.2 }));
+        let phenotype = compute_phenotype(&create_genome(Some(&overrides)));
+        assert_eq!(phenotype.extra.get("clotting_factor").and_then(Value::as_f64), Some(0.2));
+    }
+
+    #[test]
+    fn compute_genetic_diversity_by_group_buckets_individuals_by_their_own_group_id() {
+        let mut g_low = HashMap::new();
+        g_low.insert("TEST_01".to_string(), locus(0.0, Some(0.0)));
+        let mut g_high = HashMap::new();
+        g_high.insert("TEST_01".to_string(), locus(1.0, Some(1.0)));
+        let mut a = individual_with("male", true, false, Some(0.0), g_low);
+        a.group_id = Some("alpha".to_string());
+        let mut b = individual_with("female", true, false, Some(0.0), g_high);
+        b.group_id = Some("beta".to_string());
+        let by_group = compute_genetic_diversity_by_group(&[&a, &b]);
+        assert!(by_group.get("alpha").is_some());
+        assert!(by_group.get("beta").is_some());
+        assert_eq!(by_group["alpha"]["avg_heterozygosity"], 0.0);
+    }
+
+    #[test]
+    fn individuals_with_no_group_are_excluded_from_the_per_group_breakdown() {
+        let solo = individual_with("male", true, false, Some(0.0), HashMap::new());
+        let by_group = compute_genetic_diversity_by_group(&[&solo]);
+        assert_eq!(by_group.as_object().unwrap().len(), 0);
     }
 
     #[test]

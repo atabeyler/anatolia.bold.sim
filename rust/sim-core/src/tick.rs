@@ -101,7 +101,12 @@ fn observation_stub(ind: &crate::state::Individual) -> crate::state::Individual 
         y: ind.y,
         alive: true,
         known_techs: ind.known_techs.clone(),
-        language: crate::types::Language { vocabulary: ind.language.vocabulary.clone(), ..Default::default() },
+        language: crate::types::Language { vocabulary: ind.language.vocabulary.clone(), writing: ind.language.writing, ..Default::default() },
+        // Only cloned for literate individuals (rare, late-game) -- everyone
+        // else's memory is dropped here the same way genome/epigenome/
+        // inventory already are, to avoid paying for it on every alive
+        // individual every tick. See language::read_written_records.
+        memory: if ind.language.writing { ind.memory.clone() } else { Value::Null },
         ..Default::default()
     }
 }
@@ -922,6 +927,11 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
             }) {
                 language::learn_from_teacher(individual, teacher);
             }
+            if individual.language.writing {
+                if let Some(&scribe) = nearby.iter().find(|other| other.language.writing) {
+                    language::read_written_records(individual, scribe);
+                }
+            }
         }
     }
     phases.observation_learning_ms += __t_observation_learning.elapsed().as_secs_f64() * 1000.0;
@@ -999,7 +1009,10 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
         .max()
         .unwrap_or(0);
     let sim_id = state.id.clone().unwrap_or_default();
-    let mut conceived = biology::reproduction::check_reproduction(&alive_snapshot, current_day, &sim_id, community_lang_stage, &state.genealogy);
+    let season = world_value.get("season").and_then(Value::as_str).unwrap_or("spring").to_string();
+    let calendar_known = discovered_techs.contains("calendar");
+    let mut conceived =
+        biology::reproduction::check_reproduction(&alive_snapshot, current_day, &sim_id, community_lang_stage, &state.genealogy, &season, calendar_known);
     // Built once and reused by every id-based lookup below (conception and
     // due-birth processing alike): only new children get pushed onto
     // state.individuals in this block, and only at the end, so indices
@@ -1399,6 +1412,16 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                 Some((id, leader))
             })
             .collect();
+        // Snapshot of each current group leader's own behavior tally, built
+        // before the mutable pass below so a juvenile can observe their
+        // leader-parent's pattern without a self-referential borrow of
+        // state.individuals (see social::observe_leadership_style).
+        let leader_behavior_by_id: HashMap<String, Value> = state
+            .individuals
+            .iter()
+            .filter(|i| i.group_id.as_ref().and_then(|gid| leader_by_group.get(gid)).is_some_and(|lid| lid == &i.id))
+            .map(|i| (i.id.clone(), i.extra.get("_behaviorCounts").cloned().unwrap_or_else(|| json!({}))))
+            .collect();
         maybe_par_iter_mut!(state.individuals).for_each(|individual| {
             if individual.is_dead {
                 return;
@@ -1406,6 +1429,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
             let leader_id = individual.group_id.as_ref().and_then(|gid| leader_by_group.get(gid));
             let role = social::compute_role_for(individual, leader_id.map(|s| s.as_str()));
             individual.extra.insert("group_role".to_string(), json!(role));
+            social::observe_leadership_style(individual, &leader_behavior_by_id, JUVENILE_MAX_AGE_YEARS);
         });
     }
     phases.social_ms += __t_social.elapsed().as_secs_f64() * 1000.0;
@@ -1645,6 +1669,16 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
         &mut fired_milestones,
     ));
     state.milestones = from_string_set(fired_milestones);
+
+    // Writing societies "record" today's most notable event for posterity --
+    // any literate group member can later access it via
+    // language::read_written_records, even without having witnessed it
+    // themselves (see language.rs for the observational-learning rationale).
+    if let Some(notable) = events.last().cloned() {
+        for ind in state.individuals.iter_mut().filter(|i| i.alive && i.language.writing) {
+            language::record_event_for_posterity(ind, &notable, current_day);
+        }
+    }
 
     if !events.is_empty() {
         state.events.extend(events);

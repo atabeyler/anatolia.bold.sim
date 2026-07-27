@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 
 use crate::state::{Individual, SimulationState, WorldState};
 use crate::{
-    compute_cultural_prestige, compute_economic_stats, compute_genetic_diversity, compute_health_stats, compute_population_psych_stats, create_founder_for_simulation, create_world_state,
-    derive_phoneme_palette_from_population, get_language_summary, known_techs_json,
+    compute_cultural_prestige, compute_economic_stats, compute_genetic_diversity, compute_genetic_diversity_by_group, compute_health_stats, compute_population_psych_stats,
+    create_founder_for_simulation, create_world_state, derive_phoneme_palette_from_population, get_language_summary, get_vocabulary_by_group, known_techs_json,
 };
 
 /// Builds a brand-new two-founder `SimulationState`, ready to persist and
@@ -176,6 +176,8 @@ pub fn derive_stats(sim: &SimulationState) -> Value {
     let health_stats = compute_health_stats(&sim.individuals);
     let language_stage_distribution = get_language_summary(&sim.individuals);
     let genetic_diversity = compute_genetic_diversity(&alive);
+    let genetic_diversity_by_group = compute_genetic_diversity_by_group(&alive);
+    let vocabulary_by_group = get_vocabulary_by_group(&sim.individuals);
     let allele_frequencies: Value = ALLELE_FREQ_TRAITS
         .iter()
         .map(|(key, extract)| {
@@ -255,6 +257,8 @@ pub fn derive_stats(sim: &SimulationState) -> Value {
         "centroid_y": centroid_y,
         "dominant_drive": dominant_drive,
         "genetic_diversity": genetic_diversity,
+        "genetic_diversity_by_group": genetic_diversity_by_group,
+        "vocabulary_by_group": vocabulary_by_group,
         "allele_frequencies": allele_frequencies,
     })
 }

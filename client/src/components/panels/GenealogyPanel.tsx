@@ -17,6 +17,63 @@ interface IndividualNode {
   phenotype?: { name?: string; fluid_intelligence?: number };
 }
 
+interface FullIndividual extends IndividualNode {
+  is_founder?: boolean;
+  generation?: number;
+  language?: { stage?: number; stage_name?: string; writing?: boolean };
+  psychology?: { mental_state?: string };
+  extra?: { group_role?: string };
+}
+
+// A short, readable biography built purely from already-tracked engine data
+// (birth/death day, generation, language stage, role) -- no LLM call, no
+// content beyond what the simulation itself already recorded for this
+// individual. The equivalent of a family-history summary a player could
+// otherwise only piece together by reading the raw fields by hand.
+function buildBiography(ind: FullIndividual, parentNames: string[], lang: LangCode): string {
+  const name = ind.phenotype?.name ?? ind.id.slice(-6).toUpperCase();
+  const birthYear = Math.floor(ind.birth_day / 365);
+  const sexWord = ind.sex === 'male' ? text(lang, { tr: 'erkek', en: 'male', de: 'männlich', fr: 'homme', ar: 'ذكر' }) : text(lang, { tr: 'kadın', en: 'female', de: 'weiblich', fr: 'femme', ar: 'أنثى' });
+  const parts: string[] = [];
+
+  if (ind.is_founder) {
+    parts.push(text(lang, {
+      tr: `${name}, bu medeniyetin iki kurucusundan biri olarak yıl ${birthYear} civarında var oldu.`,
+      en: `${name} came into existence as one of this civilization's two founders, around year ${birthYear}.`,
+    }));
+  } else if (parentNames.length > 0) {
+    parts.push(text(lang, {
+      tr: `${name}, ${parentNames.join(' ve ')} çocuğu olarak yıl ${birthYear}'de (${sexWord}) doğdu.`,
+      en: `${name} was born in year ${birthYear} (${sexWord}) to ${parentNames.join(' and ')}.`,
+    }));
+  } else {
+    parts.push(text(lang, { tr: `${name}, yıl ${birthYear}'de (${sexWord}) doğdu.`, en: `${name} was born in year ${birthYear} (${sexWord}).` }));
+  }
+
+  if (ind.generation !== undefined && ind.generation > 0) {
+    parts.push(text(lang, { tr: `${ind.generation}. nesildendi.`, en: `Belonged to generation ${ind.generation}.` }));
+  }
+  const stageName = ind.language?.stage_name;
+  if (stageName && stageName !== 'pre-linguistic') {
+    parts.push(text(lang, { tr: `Yaşamı boyunca dilde "${stageName}" evresine ulaştı.`, en: `Reached the "${stageName}" stage of language during their lifetime.` }));
+    if (ind.language?.writing) {
+      parts.push(text(lang, { tr: 'Yazıyı öğrenen nadir bireylerden biriydi.', en: 'Was one of the rare individuals to learn writing.' }));
+    }
+  }
+  const role = ind.extra?.group_role;
+  if (role && role !== 'member') {
+    parts.push(text(lang, { tr: `Topluluğunda "${role}" rolünü üstlendi.`, en: `Held the role of "${role}" within their community.` }));
+  }
+  if (ind.is_dead && ind.death_day !== undefined) {
+    const deathYear = Math.floor(ind.death_day / 365);
+    const ageAtDeath = Math.max(0, deathYear - birthYear);
+    parts.push(text(lang, { tr: `Yıl ${deathYear}'de, ${ageAtDeath} yaşında hayatını kaybetti.`, en: `Died in year ${deathYear}, at age ${ageAtDeath}.` }));
+  } else {
+    parts.push(text(lang, { tr: 'Hâlâ hayatta.', en: 'Still alive.' }));
+  }
+  return parts.join(' ');
+}
+
 function buildTree(pop: IndividualNode[], rootId: string, depth = 0, maxDepth = 4): any {
   if (depth > maxDepth) return null;
   const node = pop.find(i => i.id === rootId);
@@ -76,6 +133,7 @@ export default function GenealogyPanel() {
   const [population, setPopulation] = useState<IndividualNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedRoot, setSelectedRoot] = useState<string>('');
+  const [biography, setBiography] = useState<string>('');
 
   const fetchPop = useCallback(async () => {
     if (!currentSim || !accessToken) return;
@@ -94,6 +152,22 @@ export default function GenealogyPanel() {
   }, [currentSim?.id, accessToken]);
 
   useEffect(() => { fetchPop(); }, [fetchPop]);
+
+  useEffect(() => {
+    if (!currentSim || !accessToken || !selectedRoot) { setBiography(''); return; }
+    let cancelled = false;
+    axios
+      .get<FullIndividual>(`/api/simulations/${currentSim.id}/population/${selectedRoot}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const parentNames = [data.parent_1_id, data.parent_2_id]
+          .map(pid => population.find(p => p.id === pid)?.phenotype?.name)
+          .filter((n): n is string => Boolean(n));
+        setBiography(buildBiography(data, parentNames, lang as LangCode));
+      })
+      .catch(() => { if (!cancelled) setBiography(''); });
+    return () => { cancelled = true; };
+  }, [currentSim?.id, accessToken, selectedRoot, lang, population]);
 
   const founders = population.filter(i => !i.parent_1_id && !i.parent_2_id);
   const rootNode = selectedRoot ? buildTree(population, selectedRoot) : null;
@@ -165,6 +239,15 @@ export default function GenealogyPanel() {
           </span>
         </div>
       </div>
+
+      {biography && (
+        <div className="bg-sim-surface/50 rounded-lg p-3 mb-3 border border-sim-border/30">
+          <div className="text-sim-gold text-xs font-semibold uppercase tracking-widest mb-1">
+            {text(lang as LangCode, { tr: 'Yaşam Öyküsü', en: 'Biography', de: 'Biografie', fr: 'Biographie', ar: 'السيرة الذاتية' })}
+          </div>
+          <p className="text-sim-text text-sm leading-relaxed">{biography}</p>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-sim-muted text-sm text-center py-6">

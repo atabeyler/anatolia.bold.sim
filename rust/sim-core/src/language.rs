@@ -209,6 +209,89 @@ pub const CORE_CONCEPTS: &[&str] = &[
     "spirit","sky","earth","time",
 ];
 
+/// Per-group vocabulary snapshot (concept -> word), built from whichever
+/// living member of each group happens to know the most words for that
+/// concept's group -- a read-only surface of the dialect divergence that
+/// `generate_proto_word`'s own group_id-seeded hashing already produces
+/// (different groups deterministically coin different words for the same
+/// concept), so a player can actually see two bands' words for "fire"
+/// diverge after a fission, rather than that divergence being invisible
+/// engine-internal state.
+pub fn get_vocabulary_by_group(population: &[Individual]) -> Value {
+    let mut by_group: std::collections::HashMap<&str, std::collections::HashMap<&str, &str>> = std::collections::HashMap::new();
+    for ind in population {
+        if !ind.alive {
+            continue;
+        }
+        let Some(gid) = ind.group_id.as_deref() else { continue };
+        let entry = by_group.entry(gid).or_default();
+        for (concept, word) in ind.language.vocabulary.iter() {
+            entry.entry(concept.as_str()).or_insert(word.as_str());
+        }
+    }
+    by_group
+        .into_iter()
+        .map(|(gid, vocab)| (gid.to_string(), vocab.into_iter().map(|(c, w)| (c.to_string(), json!(w))).collect::<serde_json::Map<String, Value>>().into()))
+        .collect::<serde_json::Map<String, Value>>()
+        .into()
+}
+
+const MAX_WRITTEN_RECORDS: usize = 50;
+
+/// Once an individual has reached the writing stage, a notable event of the
+/// day can be committed to a permanent, bounded record in their own memory --
+/// extending observational learning across *time*, not just across
+/// individuals: a group member who reads this record later (see
+/// `read_written_records`) can know about an event they never personally
+/// witnessed, exactly the way a real written record works.
+pub fn record_event_for_posterity(individual: &mut Individual, event: &Value, sim_day: i32) {
+    if !individual.language.writing {
+        return;
+    }
+    if !individual.memory.is_object() {
+        individual.memory = json!({});
+    }
+    let summary = event.get("type").and_then(Value::as_str).or_else(|| event.get("description").and_then(Value::as_str)).unwrap_or("event").to_string();
+    let obj = individual.memory.as_object_mut().expect("just ensured object above");
+    let records = obj.entry("written_records").or_insert_with(|| json!([]));
+    if let Some(arr) = records.as_array_mut() {
+        if arr.len() >= MAX_WRITTEN_RECORDS {
+            arr.remove(0);
+        }
+        arr.push(json!({ "summary": summary, "day": sim_day }));
+    }
+}
+
+/// A literate individual can "read" another literate individual's written
+/// records -- transmitting knowledge of past events neither of them needs to
+/// have witnessed together, the writing-stage counterpart to
+/// `learn_from_teacher`'s vocabulary transmission. Both parties must already
+/// have writing; this never grants the writing capability itself.
+pub fn read_written_records(reader: &mut Individual, source: &Individual) {
+    if !reader.language.writing || !source.language.writing {
+        return;
+    }
+    let Some(source_records) = source.memory.get("written_records").and_then(Value::as_array) else { return };
+    if source_records.is_empty() {
+        return;
+    }
+    if !reader.memory.is_object() {
+        reader.memory = json!({});
+    }
+    let obj = reader.memory.as_object_mut().expect("just ensured object above");
+    let reader_records = obj.entry("written_records").or_insert_with(|| json!([]));
+    if let Some(reader_arr) = reader_records.as_array_mut() {
+        for rec in source_records {
+            if !reader_arr.contains(rec) {
+                reader_arr.push(rec.clone());
+            }
+        }
+        while reader_arr.len() > MAX_WRITTEN_RECORDS {
+            reader_arr.remove(0);
+        }
+    }
+}
+
 pub fn get_language_summary(population: &[Individual]) -> Value {
     let mut map = serde_json::Map::new();
     for ind in population {
@@ -665,6 +748,67 @@ mod tests {
         let p = derive_phoneme_palette(&genome_with(1.0, 1.0), &genome_with(1.0, 1.0));
         assert!(p.consonants.iter().all(|c| CONSONANT_SUPERSET.contains(c)));
         assert!(p.vowels.iter().all(|c| VOWEL_SUPERSET.contains(c)));
+    }
+
+    // ── vocabulary_by_group ─────────────────────────────────────────────
+
+    #[test]
+    fn vocabulary_by_group_only_includes_grouped_living_individuals() {
+        let mut a = make_ind(make_lang(3, 0.6));
+        a.alive = true;
+        a.group_id = Some("alpha".to_string());
+        a.language.vocabulary.insert("fire".to_string(), "za".to_string());
+        let mut solo = make_ind(make_lang(3, 0.6));
+        solo.alive = true;
+        solo.language.vocabulary.insert("fire".to_string(), "xx".to_string());
+        let vocab = get_vocabulary_by_group(&[a, solo]);
+        assert_eq!(vocab["alpha"]["fire"], "za");
+        assert_eq!(vocab.as_object().unwrap().len(), 1);
+    }
+
+    // ── record_event_for_posterity / read_written_records ───────────────
+
+    #[test]
+    fn only_a_literate_individual_can_record_an_event() {
+        let mut ind = make_ind(make_lang(3, 0.6));
+        record_event_for_posterity(&mut ind, &json!({ "type": "flood" }), 10);
+        assert!(ind.memory.get("written_records").is_none(), "writing is required to record anything");
+    }
+
+    #[test]
+    fn a_literate_individual_records_a_bounded_history_of_notable_events() {
+        let mut ind = make_ind(make_lang(6, 0.9));
+        ind.language.writing = true;
+        for day in 0..(MAX_WRITTEN_RECORDS + 10) {
+            record_event_for_posterity(&mut ind, &json!({ "type": "flood" }), day as i32);
+        }
+        let records = ind.memory["written_records"].as_array().unwrap();
+        assert_eq!(records.len(), MAX_WRITTEN_RECORDS);
+    }
+
+    #[test]
+    fn a_literate_reader_can_read_another_literate_individuals_records_even_without_witnessing_them() {
+        let mut scribe = make_ind(make_lang(6, 0.9));
+        scribe.language.writing = true;
+        record_event_for_posterity(&mut scribe, &json!({ "type": "eclipse_solar" }), 42);
+
+        let mut reader = make_ind(make_lang(6, 0.9));
+        reader.language.writing = true;
+        read_written_records(&mut reader, &scribe);
+
+        let records = reader.memory["written_records"].as_array().unwrap();
+        assert!(records.iter().any(|r| r["summary"] == "eclipse_solar" && r["day"] == 42));
+    }
+
+    #[test]
+    fn an_illiterate_reader_gains_nothing_from_a_literate_scribes_records() {
+        let mut scribe = make_ind(make_lang(6, 0.9));
+        scribe.language.writing = true;
+        record_event_for_posterity(&mut scribe, &json!({ "type": "eclipse_solar" }), 42);
+
+        let mut illiterate_reader = make_ind(make_lang(2, 0.5));
+        read_written_records(&mut illiterate_reader, &scribe);
+        assert!(illiterate_reader.memory.get("written_records").is_none());
     }
 
     #[test]

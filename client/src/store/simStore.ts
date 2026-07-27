@@ -186,6 +186,13 @@ interface SimStats {
     effective_population_size: number;
     avg_inbreeding_coefficient: number;
   };
+  genetic_diversity_by_group?: Record<string, {
+    avg_heterozygosity: number;
+    allelic_variance: number;
+    effective_population_size: number;
+    avg_inbreeding_coefficient: number;
+  }>;
+  vocabulary_by_group?: Record<string, Record<string, string>>;
 }
 
 // Feature 1: centroid trail point

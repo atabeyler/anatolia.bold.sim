@@ -12,12 +12,43 @@ const QUICK_QUESTIONS: { tr: string; en: string; de: string; fr: string; ar: str
   { tr: 'Sıradaki hangi teknoloji ortaya çıkmalı?', en: 'What technology should emerge next?', de: 'Welche Technologie sollte als nächstes entstehen?', fr: 'Quelle technologie devrait émerger ensuite?', ar: 'ما التقنية التي يجب أن تظهر بعد ذلك؟' },
 ];
 
+interface CompareResult {
+  a: { id: string; name?: string | null; stats: Record<string, unknown> };
+  b: { id: string; name?: string | null; stats: Record<string, unknown> };
+}
+
+const COMPARE_METRICS: { key: string; tr: string; en: string }[] = [
+  { key: 'population', tr: 'Nüfus', en: 'Population' },
+  { key: 'max_language_stage', tr: 'Dil Evresi', en: 'Language Stage' },
+  { key: 'technologies', tr: 'Teknolojiler', en: 'Technologies' },
+  { key: 'avg_consciousness', tr: 'Ort. Bilinç', en: 'Avg Consciousness' },
+  { key: 'qol_index', tr: 'Yaşam Kalitesi', en: 'QoL Index' },
+];
+
 export default function AnalysisPanel() {
   const { currentSim, accessToken, lang } = useSimStore();
   const [messages, setMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [compareId, setCompareId] = useState('');
+  const [compareResult, setCompareResult] = useState<CompareResult | null>(null);
+  const [compareError, setCompareError] = useState('');
+
+  async function runComparison() {
+    if (!currentSim || !compareId.trim()) return;
+    setCompareError('');
+    setCompareResult(null);
+    try {
+      const { data } = await axios.get<CompareResult>('/api/simulations/compare', {
+        params: { a: currentSim.id, b: compareId.trim() },
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      setCompareResult(data);
+    } catch (err: any) {
+      setCompareError(err?.response?.data?.error ?? err?.message ?? 'failed');
+    }
+  }
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -92,6 +123,47 @@ export default function AnalysisPanel() {
           <button onClick={() => send()} disabled={loading || !input.trim()} className="p-1.5 bg-sim-accent hover:bg-sim-accent/80 rounded-lg text-white transition-colors disabled:opacity-50 flex-shrink-0">
             <Send size={12} />
           </button>
+        </div>
+
+        <div className="border-t border-sim-border/40 pt-3">
+          <div className="text-sm text-sim-muted mb-2">
+            {text(lang as LangCode, {
+              tr: 'Karşılaştırmalı Deney Analizi', en: 'Comparative Experiment Analysis',
+              de: 'Vergleichende Experimentanalyse', fr: 'Analyse comparative d\'expériences', ar: 'تحليل تجريبي مقارن',
+            })}
+          </div>
+          <div className="flex gap-2 mb-2">
+            <input
+              value={compareId}
+              onChange={e => setCompareId(e.target.value)}
+              placeholder={text(lang as LangCode, { tr: 'Diğer simülasyon ID', en: 'Other simulation ID', de: 'Andere Simulations-ID', fr: 'ID de l\'autre simulation', ar: 'معرف المحاكاة الأخرى' })}
+              className="flex-1 bg-sim-bg border border-sim-border rounded-lg px-3 py-1.5 text-sm text-sim-text focus:border-sim-accent focus:outline-none"
+            />
+            <button onClick={runComparison} disabled={!currentSim || !compareId.trim()} className="px-3 py-1.5 bg-sim-surface hover:bg-sim-border rounded-lg text-sm text-sim-text transition-colors disabled:opacity-50 flex-shrink-0">
+              {text(lang as LangCode, { tr: 'Karşılaştır', en: 'Compare', de: 'Vergleichen', fr: 'Comparer', ar: 'قارن' })}
+            </button>
+          </div>
+          {compareError && <p className="text-sm text-red-400">{compareError}</p>}
+          {compareResult && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-sim-muted text-left border-b border-sim-border/40">
+                  <th className="py-1 pr-2">{text(lang as LangCode, { tr: 'Ölçüt', en: 'Metric' })}</th>
+                  <th className="py-1 pr-2">{compareResult.a.name ?? compareResult.a.id.slice(0, 8)}</th>
+                  <th className="py-1">{compareResult.b.name ?? compareResult.b.id.slice(0, 8)}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {COMPARE_METRICS.map(m => (
+                  <tr key={m.key} className="border-b border-sim-border/20">
+                    <td className="py-1 pr-2 text-sim-muted">{text(lang as LangCode, m)}</td>
+                    <td className="py-1 pr-2 text-sim-text">{String(compareResult.a.stats[m.key] ?? '—')}</td>
+                    <td className="py-1 text-sim-text">{String(compareResult.b.stats[m.key] ?? '—')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </DetailPanel>

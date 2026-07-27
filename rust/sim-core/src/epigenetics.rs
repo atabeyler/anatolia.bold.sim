@@ -1,3 +1,5 @@
+use serde_json::Value;
+
 use crate::state::Individual;
 use crate::types::EpigeneticLocus;
 
@@ -85,7 +87,21 @@ pub fn update_epigenome(individual: &mut Individual, _env: Option<&serde_json::V
     let stress = individual.psychology.stress_level;
     let nutrition = individual.extra.get("satiation").and_then(|v| v.as_f64()).unwrap_or(0.5);
     let social = if individual.group_id.is_some() { 0.6 } else { 0.2 };
-    mod_locus(individual, "HPA_AXIS", if stress > 0.7 { 0.02 } else { -0.005 }, sim_day);
+    // A *collective* trauma (a disaster/predator/conflict event logged today,
+    // as opposed to an individual "kin_death" -- see psychology::update_mental_state)
+    // hits every affected group member on the same day, not just one
+    // individual's private grief. It leaves a markedly stronger HPA_AXIS
+    // imprint than ordinary high stress, so descendants of disaster
+    // survivors (HPA_AXIS is heritable at 0.3, see LOCI above) carry a
+    // measurably stronger inherited stress-reactivity shift -- a "cultural
+    // memory" of the event encoded purely through the existing epigenetic
+    // inheritance pathway, not a new mechanism.
+    let collective_trauma_today = individual
+        .psychology
+        .trauma_events
+        .iter()
+        .any(|e| e.get("day").and_then(Value::as_i64) == Some(sim_day as i64) && e.get("type").and_then(Value::as_str).map(|t| t != "kin_death").unwrap_or(false));
+    mod_locus(individual, "HPA_AXIS", if collective_trauma_today { 0.05 } else if stress > 0.7 { 0.02 } else { -0.005 }, sim_day);
     mod_locus(individual, "LEPTIN_RESIST", if nutrition < 0.3 { 0.01 } else { -0.005 }, sim_day);
     mod_locus(individual, "OXTR_METHYL", if social < 0.3 { 0.01 } else { -0.01 }, sim_day);
     if (individual.age_days.unwrap_or(0) as f64) / 365.0 < 5.0 && stress > 0.6 {
@@ -448,6 +464,32 @@ mod tests {
         for locus in ind.epigenome.values() {
             assert!((0.0..=1.0).contains(&locus.methylation));
         }
+    }
+
+    #[test]
+    fn a_collective_disaster_leaves_a_stronger_hpa_axis_imprint_than_ordinary_stress() {
+        let mut collective = stressed_individual();
+        collective.psychology.trauma_events.push(serde_json::json!({ "type": "flood", "day": 5 }));
+        let before = collective.epigenome.get("HPA_AXIS").map(|l| l.methylation).unwrap_or(0.5);
+        update_epigenome(&mut collective, None, 5);
+        let after_collective = collective.epigenome["HPA_AXIS"].methylation;
+
+        let mut ordinary = stressed_individual();
+        update_epigenome(&mut ordinary, None, 5);
+        let after_ordinary = ordinary.epigenome["HPA_AXIS"].methylation;
+
+        assert!(after_collective > after_ordinary, "collective disaster ({after_collective}) should raise HPA_AXIS more than ordinary stress ({after_ordinary})");
+        let _ = before;
+    }
+
+    #[test]
+    fn a_private_kin_death_does_not_count_as_collective_trauma() {
+        let mut ind = stressed_individual();
+        ind.psychology.trauma_events.push(serde_json::json!({ "type": "kin_death", "day": 5 }));
+        update_epigenome(&mut ind, None, 5);
+        let mut ordinary = stressed_individual();
+        update_epigenome(&mut ordinary, None, 5);
+        assert_eq!(ind.epigenome["HPA_AXIS"].methylation, ordinary.epigenome["HPA_AXIS"].methylation);
     }
 
     #[test]

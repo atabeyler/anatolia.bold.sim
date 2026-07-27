@@ -25,18 +25,18 @@ mod tick;
 pub mod types;
 
 pub use biology::genome::{
-    coefficient_of_relationship, combine_gametes, compute_genetic_diversity, compute_inbreeding_coefficient, compute_phenotype, create_gamete,
+    coefficient_of_relationship, combine_gametes, compute_genetic_diversity, compute_genetic_diversity_by_group, compute_inbreeding_coefficient, compute_phenotype, create_gamete,
     create_genome, GenealogyEntry, GenealogyIndex,
 };
-pub use biology::individual::{create_child, create_founder, create_founder_for_simulation, get_age, get_life_stage, is_fertile, FOUNDER_GENOME_DEFAULTS};
+pub use biology::individual::{create_child, create_founder, create_founder_for_simulation, get_age, get_life_stage, is_fertile, migrate_individual_arrival, FOUNDER_GENOME_DEFAULTS};
 pub use biology::mortality::{compute_daily_death_risk, roll_death, DeathCause};
 pub use biology::reproduction::check_reproduction;
 pub use consciousness::{update_consciousness, update_inner_thought};
 pub use environment::{compute_resource_pressure, create_world_state, get_biome, is_on_land, update_world_state};
 pub use epigenetics::{compute_epigenetic_age, inherit_epigenome, initialize_epigenome, update_epigenome};
 pub use language::{
-    derive_phoneme_palette, derive_phoneme_palette_from_population, generate_proto_word, get_language_summary, learn_from_teacher, try_acquire_word_from_environment,
-    update_foxp2_expression, update_language_stage, CORE_CONCEPTS, LANGUAGE_STAGES,
+    derive_phoneme_palette, derive_phoneme_palette_from_population, generate_proto_word, get_language_summary, get_vocabulary_by_group, learn_from_teacher, read_written_records,
+    record_event_for_posterity, try_acquire_word_from_environment, update_foxp2_expression, update_language_stage, CORE_CONCEPTS, LANGUAGE_STAGES,
 };
 pub use technology::{known_techs_json, learn_tech_from_observation, TECH_TREE};
 pub use economy::{attempt_trade, compute_economic_stats, consume_resources, gather_resources, initialize_inventory, produce_goods, GOODS_TYPES, RESOURCE_TYPES};

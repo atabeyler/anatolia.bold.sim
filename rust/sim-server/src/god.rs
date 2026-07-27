@@ -36,6 +36,12 @@ pub struct TalkPayload {
     pub lang: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MigratePayload {
+    pub source_simulation_id: String,
+    pub individual_id: String,
+}
+
 async fn is_allowed(state: &AppState, headers: &axum::http::HeaderMap, sim_user_id: Option<String>) -> bool {
     let Some(user) = authenticate(state, headers).await else { return false; };
     if user.role == "admin" {
@@ -108,6 +114,58 @@ pub async fn intervene(
         }
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
     }
+}
+
+/// Cross-simulation migration/gene flow: carries one individual verbatim
+/// (genome/phenotype/epigenome/language/skills/beliefs) from another
+/// simulation into this one as a new arrival -- an explicit, rare player
+/// action, never anything the tick loop triggers on its own. Requires
+/// owning (or admin over) *both* simulations, so this can never be used to
+/// exfiltrate another user's simulation data. See
+/// sim_core::migrate_individual_arrival for exactly what does and doesn't
+/// carry over.
+pub async fn migrate_individual(
+    Path(sim_id): Path<String>,
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<MigratePayload>,
+) -> impl IntoResponse {
+    if payload.source_simulation_id == sim_id {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Source and target simulation must differ."}))).into_response();
+    }
+    let target_state = match load_full_state(&state.backend, &sim_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Target simulation not found"}))).into_response(),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    };
+    if !is_allowed(&state, &headers, target_state.user_id.clone()).await {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Target simulation owner required."}))).into_response();
+    }
+    let source_state = match load_full_state(&state.backend, &payload.source_simulation_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Source simulation not found"}))).into_response(),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    };
+    if !is_allowed(&state, &headers, source_state.user_id.clone()).await {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Source simulation owner required."}))).into_response();
+    }
+    let Some(source_individual) = source_state.individuals.iter().find(|i| i.id == payload.individual_id && i.alive && !i.is_dead) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "Individual not found or not alive"}))).into_response();
+    };
+
+    let arrival = sim_core::migrate_individual_arrival(source_individual, source_state.current_day, target_state.current_day);
+    let arrival_id = arrival.id.clone();
+    let mut target_sim = target_state;
+    target_sim.total_ever_born += 1;
+    target_sim.individuals.push(arrival);
+
+    if let Err(err) = save_existing_state(&state.backend, &target_sim).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response();
+    }
+    if let Err(err) = upsert_individuals(&state.backend, &target_sim, true).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response();
+    }
+    Json(json!({ "message": "Individual migrated.", "arrived_individual_id": arrival_id })).into_response()
 }
 
 pub async fn quarantine(

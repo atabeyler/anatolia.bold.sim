@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "anatolia-sim-desktop"
-version = "2.3.182"
+version = "2.4.0"
 dependencies = [
  "serde_json",
  "tauri",

@@ -100,6 +100,15 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
         base_risk += 0.003 * (1.0 - water_skill);
     }
 
+    // CLOT_01 (X-linked clotting-factor locus, genome.rs): a low value means
+    // any injury bleeds longer before clotting -- a small, genetically-driven
+    // bump to overall risk, distinct from (and additive to) the toughness-
+    // based predator/trauma modeling above.
+    let clotting_factor = phenotype.extra.get("clotting_factor").and_then(Value::as_f64).unwrap_or(0.7);
+    if clotting_factor < 0.3 {
+        base_risk *= 1.15;
+    }
+
     if let Some(env) = environment {
         let env_mult = if is_founder { 0.4 } else { 1.0 };
         base_risk += env.get("disease_pressure").and_then(Value::as_f64).unwrap_or(0.0) * 0.0003 * env_mult;
