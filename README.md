@@ -200,6 +200,8 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 | Microbiome | Pathogen types, sick rate, epidemic history |
 | Events | Filterable, searchable log of every simulation event |
 | Moments | Curated feed of noteworthy milestone events |
+| Legends | Record-holder spotlight (highest consciousness, most children, longest-lived, most reputable, most prolific discoverer) pulled out of an otherwise huge population list |
+| Documentary | AI-narrated, scene-by-scene history of the civilization built from its own real tracked events, spanning its full timeline |
 | Hypothesis | AI-powered hypothesis testing against live data |
 | Analysis | AI chat for open-ended questions about the civilization, plus a two-simulation comparison tool |
 | God | Trigger disasters, alter or talk to individuals, quarantine toggle, cross-simulation migration |

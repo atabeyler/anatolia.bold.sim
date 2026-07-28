@@ -8,9 +8,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::auth::{authenticate, cloud_api_url, is_local_backend};
+use crate::gemini::{self, GeminiRequest};
 use crate::db::{
     insert_checkpoint,
     db_status_counts,
@@ -100,6 +102,8 @@ pub fn simulation_routes() -> Router<AppState> {
         .route("/:id/live-sync-tick", post(live_sync_tick))
         .route("/:id", get(get_simulation))
         .route("/:id/stats", get(get_stats))
+        .route("/:id/legends", get(get_legends))
+        .route("/:id/documentary", get(documentary))
         .route("/:id/export", get(export_simulation))
         .route("/:id/start", post(start_simulation))
         .route("/:id/pause", post(pause_simulation))
@@ -493,6 +497,214 @@ async fn get_stats(State(state): State<AppState>, Path(id): Path<String>, header
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
     };
     Json(derive_stats(&sim)).into_response()
+}
+
+async fn get_legends(State(state): State<AppState>, Path(id): Path<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if let Err(resp) = authorize_sim_access(&state, &headers, &id).await {
+        return resp;
+    }
+    let sim = match load_live_or_full_state(&state, &id).await {
+        Ok(Some(sim)) => sim,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "simulation not found"}))).into_response(),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    };
+    Json(compute_legends(&sim)).into_response()
+}
+
+fn legend_entry(ind: &Individual, value: Value) -> Value {
+    json!({
+        "id": ind.id,
+        "name": individual_display_name(ind),
+        "sex": ind.sex,
+        "birth_year": ind.birth_day.div_euclid(365),
+        "death_year": ind.death_day.map(|d| d.div_euclid(365)),
+        "alive": ind.alive && !ind.is_dead,
+        "is_founder": ind.is_founder,
+        "value": value,
+    })
+}
+
+/// "Legends" -- one record-holder per category, surfaced out of an
+/// otherwise huge population list. Purely a read-only projection of
+/// already-tracked fields (consciousness, children, longevity, reputation,
+/// discovery events); computes nothing new about any individual and grants
+/// no behavior, so it sits outside the cardinal rule's scope entirely.
+fn compute_legends(sim: &SimulationState) -> Value {
+    let highest_consciousness = sim
+        .individuals
+        .iter()
+        .max_by(|a, b| a.mind.consciousness.partial_cmp(&b.mind.consciousness).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|ind| legend_entry(ind, json!((ind.mind.consciousness * 1000.0).round() / 1000.0)));
+
+    let most_children = sim
+        .individuals
+        .iter()
+        .filter(|ind| !ind.social.children_ids.is_empty())
+        .max_by_key(|ind| ind.social.children_ids.len())
+        .map(|ind| legend_entry(ind, json!(ind.social.children_ids.len())));
+
+    // Longevity in days-lived, not calendar death_day -- a descendant born
+    // on day 10000 who died at 80 must be able to beat a founder who died on
+    // day 5000 at age 40, even though the founder's raw death_day is smaller.
+    let longest_lived = sim
+        .individuals
+        .iter()
+        .filter(|ind| ind.is_dead)
+        .max_by_key(|ind| ind.death_day.unwrap_or(ind.birth_day) - ind.birth_day)
+        .map(|ind| legend_entry(ind, json!((ind.death_day.unwrap_or(ind.birth_day) - ind.birth_day).div_euclid(365))));
+
+    let highest_reputation = sim
+        .individuals
+        .iter()
+        .max_by(|a, b| a.social.reputation.partial_cmp(&b.social.reputation).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|ind| legend_entry(ind, json!((ind.social.reputation * 1000.0).round() / 1000.0)));
+
+    // Discoveries are attributed via events (tick.rs's "discovery" events
+    // carry discoverer_id/tech_id), not a per-individual counter field --
+    // events is the single source of truth for who discovered what.
+    let mut discovery_counts: HashMap<&str, usize> = HashMap::new();
+    for event in &sim.events {
+        if event.get("type").and_then(Value::as_str) != Some("discovery") {
+            continue;
+        }
+        if let Some(discoverer_id) = event.get("discoverer_id").and_then(Value::as_str) {
+            *discovery_counts.entry(discoverer_id).or_insert(0) += 1;
+        }
+    }
+    let most_technologies = discovery_counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .and_then(|(id, count)| sim.individuals.iter().find(|i| i.id == id).map(|ind| legend_entry(ind, json!(count))));
+
+    json!({
+        "highest_consciousness": highest_consciousness,
+        "most_children": most_children,
+        "longest_lived": longest_lived,
+        "highest_reputation": highest_reputation,
+        "most_technologies": most_technologies,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct DocumentaryQuery {
+    lang: Option<String>,
+}
+
+/// AI-narrated "documentary" over a civilization's own tracked history --
+/// reuses get_report's own notable-event filter (importance medium/high),
+/// sampled evenly across the full timeline, and asks Gemini to narrate them
+/// as documentary scenes constrained to only the facts given. Falls back to
+/// a deterministic heuristic (one scene per event, verbatim descriptions)
+/// on any Gemini failure, same reliability contract as every other
+/// AI-backed feature in this app.
+async fn documentary(State(state): State<AppState>, Path(id): Path<String>, Query(params): Query<DocumentaryQuery>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if let Err(resp) = authorize_sim_access(&state, &headers, &id).await {
+        return resp;
+    }
+    let sim = match load_live_or_full_state(&state, &id).await {
+        Ok(Some(sim)) => sim,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "simulation not found"}))).into_response(),
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    };
+    let lang = crate::analysis::lang_name(params.lang);
+    let civilization_name = sim.civilization_name.clone().unwrap_or_else(|| "Unnamed Civilization".to_string());
+
+    let mut notable: Vec<Value> = sim
+        .events
+        .iter()
+        .filter(|event| matches!(event.get("importance").and_then(Value::as_str), Some("medium") | Some("high")))
+        .map(|event| to_client_event(event, &sim))
+        .collect();
+    notable.sort_by_key(|e| e.get("sim_day").and_then(Value::as_i64).unwrap_or(0));
+
+    // Spread across the whole timeline rather than only the most recent
+    // events -- a documentary should span the civilization's life, not just
+    // its last few weeks.
+    const MAX_SCENES: usize = 18;
+    let selected: Vec<&Value> = if notable.len() <= MAX_SCENES {
+        notable.iter().collect()
+    } else {
+        (0..MAX_SCENES).map(|i| &notable[i * (notable.len() - 1) / (MAX_SCENES - 1)]).collect()
+    };
+
+    let stats = derive_stats(&sim);
+    let fallback = heuristic_documentary(&civilization_name, &selected, &stats);
+
+    let event_lines: String = selected
+        .iter()
+        .map(|e| format!("Year {}: {}", e.get("sim_year").and_then(Value::as_i64).unwrap_or(0), e.get("description").and_then(Value::as_str).unwrap_or("")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if event_lines.is_empty() {
+        return Json(json!({ "civilization_name": civilization_name, "scenes": fallback, "generated_by": "heuristic" })).into_response();
+    }
+
+    let system = format!(
+        "{}\n\nYou are a documentary narrator for this simulation. Given a chronological list of real \
+         events from one civilization's history, write a short documentary broken into scenes. Respond \
+         ONLY with a JSON array, each element shaped exactly like \
+         {{\"year\": <integer>, \"title\": <short string>, \"narration\": <2-3 sentence string>}}. Use \
+         only the facts given below -- never invent individuals, events, or numbers not present in the \
+         data. Write in {lang}.",
+        gemini::APP_PRIMER
+    );
+    let user_prompt = format!(
+        "Civilization: {civilization_name}\nCurrent population: {}\nTechnologies discovered: {}\nHighest language stage reached: {}\n\nChronological events:\n{event_lines}",
+        stats.get("population").and_then(Value::as_i64).unwrap_or(0),
+        stats.get("technologies").and_then(Value::as_i64).unwrap_or(0),
+        stats.get("max_language_stage").and_then(Value::as_i64).unwrap_or(0),
+    );
+
+    let (scenes, generated_by) = match gemini::chat(GeminiRequest { system: &system, user: &user_prompt, max_tokens: 2000, temperature: 0.6, json_response: true }).await {
+        Ok(text) => match serde_json::from_str::<Value>(gemini::strip_code_fence(&text)) {
+            Ok(Value::Array(arr)) if !arr.is_empty() && arr.iter().all(|s| s.get("year").is_some() && s.get("title").is_some() && s.get("narration").is_some()) => {
+                (Value::Array(arr), "gemini")
+            }
+            _ => {
+                tracing::warn!(sim_id = %id, "documentary: gemini returned an unusable shape, falling back to heuristic");
+                (Value::Array(fallback.clone()), "heuristic")
+            }
+        },
+        Err(err) => {
+            tracing::warn!(%err, sim_id = %id, "documentary: gemini call failed, falling back to heuristic");
+            (Value::Array(fallback.clone()), "heuristic")
+        }
+    };
+
+    Json(json!({ "civilization_name": civilization_name, "scenes": scenes, "generated_by": generated_by })).into_response()
+}
+
+/// Deterministic fallback when Gemini is unavailable or misbehaves -- one
+/// scene per selected notable event (using its own real description
+/// verbatim, never inventing text), plus a closing "present day" scene.
+/// Same reliability contract every other AI-backed feature in this app
+/// already makes (see README: "falls back to the heuristic path whenever
+/// GEMINI_API_KEY is unset or a call fails").
+fn heuristic_documentary(civilization_name: &str, selected: &[&Value], stats: &Value) -> Vec<Value> {
+    let mut scenes: Vec<Value> = selected
+        .iter()
+        .map(|e| {
+            let year = e.get("sim_year").and_then(Value::as_i64).unwrap_or(0);
+            let event_type = e.get("event_type").and_then(Value::as_str).unwrap_or("event");
+            let title = pascal_to_snake(event_type).replace('_', " ");
+            json!({
+                "year": year,
+                "title": title,
+                "narration": e.get("description").and_then(Value::as_str).unwrap_or("").to_string(),
+            })
+        })
+        .collect();
+    scenes.push(json!({
+        "year": stats.get("year").and_then(Value::as_i64).unwrap_or(0),
+        "title": "present day",
+        "narration": format!(
+            "{civilization_name} now numbers {} individuals, with {} technologies discovered and language reaching stage {}.",
+            stats.get("population").and_then(Value::as_i64).unwrap_or(0),
+            stats.get("technologies").and_then(Value::as_i64).unwrap_or(0),
+            stats.get("max_language_stage").and_then(Value::as_i64).unwrap_or(0),
+        ),
+    }));
+    scenes
 }
 
 // Backs the dashboard's "Yedek Al" (export) button, which downloads the full
@@ -3579,6 +3791,88 @@ mod tests {
         assert_eq!(stats["population"], 3);
     }
 
+    // ── compute_legends ──────────────────────────────────────────────────
+
+    #[test]
+    fn highest_consciousness_legend_picks_the_real_maximum() {
+        let mut low = alive_individual();
+        low.id = "low".to_string();
+        low.mind.consciousness = 0.1;
+        let mut high = alive_individual();
+        high.id = "high".to_string();
+        high.mind.consciousness = 0.9;
+        let sim = stats_sim(vec![low, high]);
+        let legends = compute_legends(&sim);
+        assert_eq!(legends["highest_consciousness"]["id"], "high");
+        assert_eq!(legends["highest_consciousness"]["value"], 0.9);
+    }
+
+    #[test]
+    fn most_children_legend_is_absent_when_nobody_has_any() {
+        let sim = stats_sim(vec![alive_individual(), alive_individual()]);
+        let legends = compute_legends(&sim);
+        assert_eq!(legends["most_children"], Value::Null, "no individual has children, so there is no record holder");
+    }
+
+    #[test]
+    fn most_children_legend_picks_the_individual_with_the_most() {
+        let mut parent_of_one = alive_individual();
+        parent_of_one.id = "one-child".to_string();
+        parent_of_one.social.children_ids = vec!["c1".to_string()];
+        let mut parent_of_three = alive_individual();
+        parent_of_three.id = "three-children".to_string();
+        parent_of_three.social.children_ids = vec!["c1".to_string(), "c2".to_string(), "c3".to_string()];
+        let sim = stats_sim(vec![parent_of_one, parent_of_three]);
+        let legends = compute_legends(&sim);
+        assert_eq!(legends["most_children"]["id"], "three-children");
+        assert_eq!(legends["most_children"]["value"], 3);
+    }
+
+    #[test]
+    fn longest_lived_legend_uses_lifespan_in_years_not_raw_death_day() {
+        // A founder who died early (small death_day) but lived a long life
+        // must beat a much-later-born descendant who died young.
+        let mut short_lived_descendant = alive_individual();
+        short_lived_descendant.id = "descendant".to_string();
+        short_lived_descendant.is_dead = true;
+        short_lived_descendant.birth_day = 9000;
+        short_lived_descendant.death_day = Some(9000 + 365 * 5); // lived 5 years
+        let mut long_lived_founder = alive_individual();
+        long_lived_founder.id = "founder".to_string();
+        long_lived_founder.is_dead = true;
+        long_lived_founder.birth_day = -365 * 60;
+        long_lived_founder.death_day = Some(365 * 20); // lived 80 years
+        let sim = stats_sim(vec![short_lived_descendant, long_lived_founder]);
+        let legends = compute_legends(&sim);
+        assert_eq!(legends["longest_lived"]["id"], "founder");
+        assert_eq!(legends["longest_lived"]["value"], 80);
+    }
+
+    #[test]
+    fn longest_lived_legend_ignores_the_living() {
+        let mut alive = alive_individual();
+        alive.id = "alive".to_string();
+        alive.birth_day = -365 * 200; // would "win" on raw age if not excluded
+        let sim = stats_sim(vec![alive]);
+        let legends = compute_legends(&sim);
+        assert_eq!(legends["longest_lived"], Value::Null, "only the dead have a final lifespan to record");
+    }
+
+    #[test]
+    fn most_technologies_legend_counts_discovery_events_by_discoverer_id() {
+        let mut prolific = alive_individual();
+        prolific.id = "prolific".to_string();
+        let mut sim = stats_sim(vec![prolific.clone(), alive_individual()]);
+        sim.events = vec![
+            json!({ "type": "discovery", "tech_id": "fire_making", "discoverer_id": "prolific", "discovery_day": 1 }),
+            json!({ "type": "discovery", "tech_id": "stone_tools", "discoverer_id": "prolific", "discovery_day": 2 }),
+            json!({ "type": "birth", "individual_id": "prolific", "day": 0 }),
+        ];
+        let legends = compute_legends(&sim);
+        assert_eq!(legends["most_technologies"]["id"], "prolific");
+        assert_eq!(legends["most_technologies"]["value"], 2);
+    }
+
     #[test]
     fn avg_cultural_prestige_is_zero_with_no_groups() {
         let sim = stats_sim(vec![alive_individual()]);
@@ -4801,5 +5095,118 @@ mod tests {
             StatusCode::FORBIDDEN,
             "must not be able to pull an individual out of a simulation the caller doesn't own"
         );
+    }
+
+    // ── Legends panel (/api/simulations/:id/legends) ────────────────────
+
+    #[tokio::test]
+    async fn legends_endpoint_reports_the_two_founders_as_the_only_current_record_holders() {
+        let app = test_app(test_state().await);
+        let sim_id = create_simulation(&app).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/{sim_id}/legends"))
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("legends response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        // A freshly created simulation has only its two founders, neither
+        // dead nor with children yet -- consciousness/reputation record
+        // holders must still resolve to one of them, and longevity/children
+        // must both be absent (nobody has died or reproduced yet).
+        assert!(body["highest_consciousness"]["id"].is_string());
+        assert!(body["highest_reputation"]["id"].is_string());
+        assert_eq!(body["most_children"], Value::Null);
+        assert_eq!(body["longest_lived"], Value::Null);
+        assert_eq!(body["most_technologies"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn legends_endpoint_rejects_a_simulation_the_caller_does_not_own() {
+        let app = test_app(test_state().await);
+        let sim_id = create_simulation(&app).await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/{sim_id}/legends"))
+                    .header("authorization", format!("Bearer {}", other_test_token("legends-outsider")))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("legends response");
+        assert_ne!(response.status(), StatusCode::OK);
+    }
+
+    // ── Documentary (/api/simulations/:id/documentary) ──────────────────
+
+    #[tokio::test]
+    async fn documentary_endpoint_falls_back_to_the_heuristic_without_a_gemini_key() {
+        // No GEMINI_API_KEY is set in the test environment, so this must
+        // deterministically take the heuristic path rather than failing.
+        let app = test_app(test_state().await);
+        let sim_id = create_simulation(&app).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/{sim_id}/documentary"))
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("documentary response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["generated_by"], "heuristic");
+        let scenes = body["scenes"].as_array().expect("scenes array");
+        assert!(!scenes.is_empty(), "the heuristic fallback must always produce at least the present-day scene");
+        let last = scenes.last().unwrap();
+        assert_eq!(last["title"], "present day");
+        assert!(last["narration"].as_str().unwrap().contains("individuals"));
+    }
+
+    #[tokio::test]
+    async fn documentary_endpoint_rejects_a_simulation_the_caller_does_not_own() {
+        let app = test_app(test_state().await);
+        let sim_id = create_simulation(&app).await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/{sim_id}/documentary"))
+                    .header("authorization", format!("Bearer {}", other_test_token("documentary-outsider")))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("documentary response");
+        assert_ne!(response.status(), StatusCode::OK);
+    }
+
+    fn other_test_token(username: &str) -> String {
+        let claims = crate::auth::Claims {
+            id: uuid::Uuid::new_v4().to_string(),
+            username: username.to_string(),
+            email: format!("{username}@example.com"),
+            role: "user".to_string(),
+            exp: (chrono::Utc::now().timestamp() + 900) as usize,
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(crate::auth::access_secret().as_bytes()),
+        )
+        .expect("sign other token")
     }
 }

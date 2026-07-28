@@ -45,6 +45,8 @@ const PopulationPyramidPanel = lazy(() => import('../components/panels/Populatio
 const ReportPanel = lazy(() => import('../components/panels/ReportPanel'));
 const EventsPanel = lazy(() => import('../components/panels/EventsPanel'));
 const PerformancePanel = lazy(() => import('../components/panels/PerformancePanel'));
+const LegendsPanel = lazy(() => import('../components/panels/LegendsPanel'));
+const DocumentaryPanel = lazy(() => import('../components/panels/DocumentaryPanel'));
 
 const SPEEDS = [1, 5, 20, 100];
 
@@ -67,6 +69,8 @@ const MODULES = [
   { id: 'art',          labels: { tr: 'SANAT',      en: 'ART',      de: 'KUNST',    fr: 'ART',      ar: 'الفن'       }, icon: '🎨' },
   { id: 'astronomy',    labels: { tr: 'ASTRONOMİ',  en: 'ASTRO.',   de: 'ASTRON.',  fr: 'ASTRON.',  ar: 'الفلك'      }, icon: '🌙' },
   { id: 'moments',      labels: { tr: 'ANLAR',      en: 'MOMENTS',  de: 'MOMENTE',  fr: 'MOMENTS',  ar: 'اللحظات'    }, icon: '✦' },
+  { id: 'legends',      labels: { tr: 'EFSANELER',  en: 'LEGENDS',  de: 'LEGENDEN', fr: 'LÉGENDES', ar: 'الأساطير'   }, icon: '🏆' },
+  { id: 'documentary',  labels: { tr: 'BELGESEL',   en: 'DOC.',     de: 'DOKU.',    fr: 'DOC.',     ar: 'وثائقي'     }, icon: '🎬' },
   { id: 'hypothesis',   labels: { tr: 'HİPOTEZ',    en: 'HYPOTH.',  de: 'HYPOTH.',  fr: 'HYPOTH.',  ar: 'الفرضية'    }, icon: '💡' },
   { id: 'epigenetics',  labels: { tr: 'EPİGEN.',    en: 'EPIGEN.',  de: 'EPIGEN.',  fr: 'ÉPIGEN.',  ar: 'التخلق'     }, icon: '🔬' },
   { id: 'genetics',     labels: { tr: 'ÇEŞİTLİLİK', en: 'DIVERSITY',de: 'VIELFALT', fr: 'DIVERSITÉ',ar: 'التنوع'     }, icon: '🧫' },
@@ -1347,6 +1351,8 @@ export default function SimulationPage() {
       <ErrorBoundary name="GeneticDiversity"><Suspense fallback={null}><GeneticDiversityPanel /></Suspense></ErrorBoundary>
       <ErrorBoundary name="Genealogy"><Suspense fallback={null}><GenealogyPanel /></Suspense></ErrorBoundary>
       <ErrorBoundary name="God"><Suspense fallback={null}><GodPanel /></Suspense></ErrorBoundary>
+      <ErrorBoundary name="Legends"><Suspense fallback={null}><LegendsPanel /></Suspense></ErrorBoundary>
+      <ErrorBoundary name="Documentary"><Suspense fallback={null}><DocumentaryPanel /></Suspense></ErrorBoundary>
       <ErrorBoundary name="TimeMachine"><Suspense fallback={null}><TimeMachinePanel /></Suspense></ErrorBoundary>
       <ErrorBoundary name="Analysis"><Suspense fallback={null}><AnalysisPanel /></Suspense></ErrorBoundary>
       <ErrorBoundary name="Hypothesis"><Suspense fallback={null}><HypothesisPanel /></Suspense></ErrorBoundary>

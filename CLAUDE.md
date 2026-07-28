@@ -611,12 +611,12 @@ Movement angle is influenced (in order) by: survival stress (hunger/thirst) → 
 - Disaster/flood → `_waterFear + 0.3`; predator death → `predator fear`; drowning → `_waterFear + 0.3`.
 - `_waterFear` is inherited: child starts with `(parent1._waterFear + parent2._waterFear) / 2 * 0.45`.
 
-## Client Panels (29)
+## Client Panels (31)
 
 **Core:** `PopulationPyramidPanel StatsPanel PopulationPanel DetailPanel EventsPanel`
 **Scientific:** `BiologyPanel LanguagePanel EnvironmentPanel EpigeneticsPanel GeneticDiversityPanel PsychologyPanel BeliefPanel CulturePanel TechnologyPanel`
 **Advanced:** `SocialPanel EconomyPanel ArchitecturePanel LawPanel AstronomyPanel ArtPanel MicrobiomePanel`
-**Experimental:** `HypothesisPanel GodPanel GenealogyPanel AnalysisPanel TimeMachinePanel ReportPanel MomentsPanel PerformancePanel`
+**Experimental:** `HypothesisPanel GodPanel GenealogyPanel AnalysisPanel TimeMachinePanel ReportPanel MomentsPanel PerformancePanel LegendsPanel DocumentaryPanel`
 
 No new panel was added for the ten feature extensions below -- each extends
 an existing panel instead:
@@ -626,11 +626,31 @@ an existing panel instead:
 - `AnalysisPanel` — a "Comparative Experiment Analysis" section calling `GET /api/simulations/compare` to diff two owned simulations' stats side by side.
 - `GodPanel` — a "Cross-Simulation Migration" section calling `POST /api/god/:id/migrate-individual`.
 
+`LegendsPanel` and `DocumentaryPanel` are genuinely new panels (not extensions):
+- `LegendsPanel` calls `GET /api/simulations/:id/legends`, backed by
+  `routes::compute_legends` -- a read-only projection over already-tracked
+  fields (`mind.consciousness`, `social.children_ids`, `social.reputation`,
+  lifespan-in-years for the dead, and `discoverer_id` tallied off
+  `type: "discovery"` events) that surfaces one record-holder per category.
+  Computes nothing new about any individual and grants no behavior, so it
+  sits outside the cardinal rule's scope entirely.
+- `DocumentaryPanel` calls `GET /api/simulations/:id/documentary`
+  (`routes::documentary`), which samples this simulation's own notable
+  events (the same `importance: "medium"|"high"` filter `get_report` uses)
+  evenly across the full timeline and asks Gemini to narrate them as
+  documentary scenes constrained to only the given facts -- never inventing
+  individuals, events, or numbers. Falls back to a deterministic heuristic
+  (one scene per event, using its own real description verbatim, plus a
+  closing "present day" scene) on any Gemini failure, the same reliability
+  contract every other AI-backed feature in this app already makes.
+
 ## API Routes
 
 ```
 /api/auth        — login, register
 /api/simulations — create, start, pause, get state, checkpoint, time machine
+                   /:id/legends — record-holder spotlight (see below)
+                   /:id/documentary — AI-narrated history (see below)
                    /compare — read-only side-by-side stats for two owned simulations (?a=&b=)
 /api/god         — founder interventions (God Mode)
                    /:simId/migrate-individual — cross-simulation migration/gene flow (see below)
