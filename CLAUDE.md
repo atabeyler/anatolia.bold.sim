@@ -726,6 +726,40 @@ curl -X POST http://localhost:3001/api/admin/seed-admin \
   -H "Content-Type: application/json"
 ```
 
+## Documentation Requirement
+
+**Every change or new feature must update its documentation in the same
+commit -- documentation is not a follow-up task.** Concretely, whenever a
+commit adds a feature, changes existing behavior, adds/renames an API
+route, or adds/changes a client panel, that same commit must also update
+whichever of these apply:
+
+1. **`README.md`** — the user-facing overview. Update the Architecture
+   table, Key Mechanics section, Panels table, and/or Simulation Controls
+   list as relevant to what changed.
+2. **`AGENTS.md`** — the technical reference. Update the relevant section
+   (engine formulas, loci tables, Client Panels list, API Routes, etc.) so
+   it stays an accurate description of the code as it actually behaves, not
+   as it behaved when this file was last touched.
+3. **This file (`CLAUDE.md`)'s inlined copy of `AGENTS.md`** — this file
+   embeds `AGENTS.md`'s content verbatim (see its own header) so it loads
+   automatically into every AI coding session. Apply the exact same edit to
+   both files in the same commit; a drift between them means one of them is
+   actively misleading whoever (human or AI) reads it next. This file
+   carries a few extra sections of its own (git-identity rules, the
+   keystore/env-var backups) that `AGENTS.md` does not — leave those
+   untouched.
+4. **The in-app user guide** (`client/src/utils/menuI18n.ts`'s
+   `GUIDE_BLOCKS`, the 📖 Kullanım Kılavuzu / User Guide players actually
+   open from the in-app menu) — update or add the relevant row/bullet, in
+   **all five languages** (`tr`/`en`/`de`/`fr`/`ar`), matching the style of
+   the existing entries. Skip this only for changes with no player-visible
+   surface at all (e.g. a pure refactor, an internal test, a dependency
+   bump).
+
+A feature is not "done" until all of the above that apply to it are
+updated — treat an undocumented feature the same as an untested one.
+
 ## AI Attribution Policy
 
 No commit, merge, PR, branch name, or code comment in this repo may reveal
