@@ -710,6 +710,16 @@ engineer would write them.
 
 All development directly on `main` → push → Render auto-deploys.
 
+**Doc-only pushes don't trigger a Render rebuild.** `render.yaml`'s
+`buildFilter.ignoredPaths` skips root markdown docs (`README.md`,
+`AGENTS.md`, `CLAUDE.md`), `desktop/**`, `client/android/**`, and
+`.github/**` -- none of those paths are read by the root `build` script
+(`npm run build`: `build:wasm` + `client/` + `cargo build -p sim-server`),
+so a push touching only them would otherwise still burn a full wasm+client+
+release-Rust rebuild for a byte-identical binary. This exhausted the
+service's free-tier monthly quota once already (2026-07-28, after a run of
+doc-only commits) before the filter was added.
+
 ## Versioning (desktop + Android release)
 
 The `Desktop Release` GitHub Actions workflow (`.github/workflows/release.yml`)

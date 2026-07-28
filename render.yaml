@@ -13,6 +13,26 @@ services:
     buildCommand: npm run build
     startCommand: ./rust/target/release/sim-server
     healthCheckPath: /api/health
+    # autoDeployTrigger: commit means *every* push to main deploys -- but the
+    # root "build" script (see package.json) only ever touches rust/sim-wasm,
+    # client/, and rust/sim-core+sim-server; it never reads desktop/,
+    # client/android/, .github/, or the root markdown docs. A push that only
+    # touches those paths would still trigger a full (expensive: wasm +
+    # client + a release Rust compile) rebuild for a binary that comes out
+    # byte-for-byte identical -- purely wasted free-tier build/compute quota,
+    # which is exactly what exhausted this service's monthly Render quota on
+    # 2026-07-28 after a run of doc-only commits. ignoredPaths skips the
+    # rebuild for those; changes to render.yaml itself are always processed
+    # regardless (Render's own behavior, not something this filter controls).
+    buildFilter:
+      ignoredPaths:
+        - "*.md"
+        - "AGENTS.md"
+        - "README.md"
+        - "CLAUDE.md"
+        - "desktop/**"
+        - "client/android/**"
+        - ".github/**"
     envVars:
       - key: NODE_ENV
         value: production
