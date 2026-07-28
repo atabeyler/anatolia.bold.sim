@@ -1527,6 +1527,12 @@ mod tests {
                     .route("/:simId", axum::routing::post(crate::analysis::analyze))
                     .route("/:simId/hypothesis", axum::routing::post(crate::analysis::hypothesis)),
             )
+            .nest(
+                "/api/god",
+                Router::new()
+                    .route("/:simId/intervene", axum::routing::post(crate::god::intervene))
+                    .route("/:simId/migrate-individual", axum::routing::post(crate::god::migrate_individual)),
+            )
             .with_state(state)
     }
 
@@ -4583,5 +4589,217 @@ mod tests {
         let raw = json!({ "type": "some_future_event", "day": 1 });
         let event = to_client_event(&raw, &sim);
         assert_eq!(event["description"], "some_future_event");
+    }
+
+    // ── Feature #8: comparative simulation analysis (/api/simulations/compare) ──
+
+    #[tokio::test]
+    async fn compare_endpoint_returns_side_by_side_stats_for_two_owned_simulations() {
+        let app = test_app(test_state().await);
+        let sim_a = create_simulation(&app).await;
+        let sim_b = create_simulation(&app).await;
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/compare?a={sim_a}&b={sim_b}"))
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("compare response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["a"]["id"], sim_a);
+        assert_eq!(body["b"]["id"], sim_b);
+        assert_eq!(body["a"]["stats"]["population"], 2, "each freshly created sim starts with its two founders");
+        assert_eq!(body["b"]["stats"]["population"], 2);
+    }
+
+    #[tokio::test]
+    async fn compare_endpoint_rejects_a_simulation_the_caller_does_not_own() {
+        // A second, differently-authenticated user's simulation must not be
+        // readable through the comparison endpoint just by knowing its id.
+        let app = test_app(test_state().await);
+        let sim_a = create_simulation(&app).await;
+
+        let other_claims = crate::auth::Claims {
+            id: "22222222-2222-2222-2222-222222222222".to_string(),
+            username: "other".to_string(),
+            email: "other@example.com".to_string(),
+            role: "user".to_string(),
+            exp: (chrono::Utc::now().timestamp() + 900) as usize,
+        };
+        let other_token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &other_claims,
+            &jsonwebtoken::EncodingKey::from_secret(crate::auth::access_secret().as_bytes()),
+        )
+        .expect("sign other token");
+
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/simulations")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {other_token}"))
+                    .body(Body::from(json!({"name": "Other's sim", "latitude": 10.0, "longitude": 10.0, "founder_1_params": {}, "founder_2_params": {}}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .expect("create response");
+        let sim_owned_by_other = body_json(create_resp).await["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/compare?a={sim_a}&b={sim_owned_by_other}"))
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("compare response");
+        assert_ne!(response.status(), StatusCode::OK, "must not leak another user's simulation stats");
+    }
+
+    // ── Feature #10: cross-simulation migration (/api/god/:id/migrate-individual) ──
+
+    #[tokio::test]
+    async fn migrate_individual_carries_the_source_individuals_genome_into_the_target_as_a_non_founder_arrival() {
+        let app = test_app(test_state().await);
+        let source_sim = create_simulation(&app).await;
+        let target_sim = create_simulation(&app).await;
+
+        let pop_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/{source_sim}/population"))
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("population response");
+        assert_eq!(pop_resp.status(), StatusCode::OK);
+        let source_population = body_json(pop_resp).await;
+        let source_individuals = source_population.as_array().expect("population array");
+        assert_eq!(source_individuals.len(), 2, "a fresh simulation has exactly its two founders");
+        let source_individual = &source_individuals[0];
+        let source_individual_id = source_individual["id"].as_str().expect("individual id").to_string();
+        let source_foxp2 = source_individual["phenotype"]["language_capacity"].as_f64().expect("language_capacity present");
+
+        let migrate_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/god/{target_sim}/migrate-individual"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::from(json!({"source_simulation_id": source_sim, "individual_id": source_individual_id}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .expect("migrate response");
+        assert_eq!(migrate_resp.status(), StatusCode::OK, "migration between two simulations owned by the same user must succeed");
+        let migrate_body = body_json(migrate_resp).await;
+        let arrived_id = migrate_body["arrived_individual_id"].as_str().expect("arrived_individual_id present").to_string();
+        assert_ne!(arrived_id, source_individual_id, "the arrival must get a fresh id, not reuse the source's");
+
+        let target_pop_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/{target_sim}/population"))
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("target population response");
+        let target_population = body_json(target_pop_resp).await;
+        let target_individuals = target_population.as_array().expect("population array");
+        assert_eq!(target_individuals.len(), 3, "the target simulation should now have its 2 founders plus the new arrival");
+
+        let arrival = target_individuals.iter().find(|i| i["id"] == arrived_id).expect("arrival present in target population");
+        assert_eq!(arrival["is_founder"], false, "a migrated individual must never be marked as a founder");
+        assert_eq!(arrival["parent_1_id"], Value::Null, "the source simulation's genealogy must not leak a dangling parent id into the target");
+        assert_eq!(arrival["parent_2_id"], Value::Null);
+        assert_eq!(
+            arrival["phenotype"]["language_capacity"], source_foxp2,
+            "the arrival's genome-derived phenotype must carry over from the source individual unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn migrate_individual_is_rejected_when_the_caller_does_not_own_the_source_simulation() {
+        let app = test_app(test_state().await);
+        let target_sim = create_simulation(&app).await;
+
+        let other_claims = crate::auth::Claims {
+            id: "33333333-3333-3333-3333-333333333333".to_string(),
+            username: "other2".to_string(),
+            email: "other2@example.com".to_string(),
+            role: "user".to_string(),
+            exp: (chrono::Utc::now().timestamp() + 900) as usize,
+        };
+        let other_token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &other_claims,
+            &jsonwebtoken::EncodingKey::from_secret(crate::auth::access_secret().as_bytes()),
+        )
+        .expect("sign other token");
+        let create_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/simulations")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {other_token}"))
+                    .body(Body::from(json!({"name": "Someone else's sim", "latitude": 5.0, "longitude": 5.0, "founder_1_params": {}, "founder_2_params": {}}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .expect("create response");
+        let sim_owned_by_other = body_json(create_resp).await["id"].as_str().unwrap().to_string();
+        let pop_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/simulations/{sim_owned_by_other}/population"))
+                    .header("authorization", format!("Bearer {other_token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("population response");
+        let other_individual_id = body_json(pop_resp).await[0]["id"].as_str().unwrap().to_string();
+
+        let migrate_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/god/{target_sim}/migrate-individual"))
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {}", test_token()))
+                    .body(Body::from(json!({"source_simulation_id": sim_owned_by_other, "individual_id": other_individual_id}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .expect("migrate response");
+        assert_eq!(
+            migrate_resp.status(),
+            StatusCode::FORBIDDEN,
+            "must not be able to pull an individual out of a simulation the caller doesn't own"
+        );
     }
 }
