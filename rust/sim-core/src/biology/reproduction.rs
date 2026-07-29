@@ -1,6 +1,7 @@
 use crate::spatial::SpatialGrid;
 use crate::state::Individual;
 use rand::Rng;
+use serde_json::Value;
 
 use super::genome::{coefficient_of_relationship, GenealogyIndex};
 use super::individual::{create_child, get_age, is_fertile};
@@ -34,6 +35,7 @@ pub fn check_reproduction(
     genealogy: &GenealogyIndex,
     season: &str,
     calendar_known: bool,
+    groups: &[Value],
 ) -> Vec<Individual> {
     let mut newborns = Vec::new();
     let fertile_males: Vec<&Individual> = population
@@ -57,7 +59,7 @@ pub fn check_reproduction(
         if nearby_males.is_empty() {
             continue;
         }
-        let male = nearby_males[rand::thread_rng().gen_range(0..nearby_males.len())];
+        let male = pick_weighted_mate(&nearby_males, female, genealogy, groups);
         let p = (conception_probability(female, male, current_day, community_lang_stage, genealogy) * seasonal_fertility_multiplier(season, calendar_known)).clamp(0.0, 1.0);
         if rand::random::<f64>() < p {
             let due_day = current_day + PREGNANCY_MIN + rand::thread_rng().gen_range(0..14);
@@ -67,6 +69,70 @@ pub fn check_reproduction(
     }
 
     newborns
+}
+
+/// Whether `group_id` currently holds the `incest_taboo` norm -- the group
+/// having *culturally learned* it (see law.rs's norm-emergence gating on
+/// language stage/IQ/generation), not something granted to any individual
+/// directly. Missing group or missing norms array both read as "not learned
+/// yet", same as a group that hasn't reached the threshold.
+fn group_has_incest_taboo(group_id: Option<&str>, groups: &[Value]) -> bool {
+    let Some(gid) = group_id else { return false };
+    groups
+        .iter()
+        .find(|g| g.get("id").and_then(Value::as_str) == Some(gid))
+        .and_then(|g| g.get("norms"))
+        .and_then(Value::as_array)
+        .is_some_and(|norms| norms.iter().any(|n| n.as_str() == Some("incest_taboo")))
+}
+
+/// Mate-selection weight for one prospective male, from the female's own
+/// point of view. Unrelated candidates (the common case) always weigh 1.0.
+/// A related candidate is discounted by two independent, additive
+/// mechanisms -- neither one a scripted "this individual avoids that
+/// individual" rule:
+///
+/// 1. An innate, always-on aversion scaled by how closely related the pair
+///    actually is (real-world kin-recognition/Westermarck-style aversion is
+///    developmental/instinctual, not learned, so this applies to every
+///    individual regardless of culture).
+/// 2. A much steeper discount once *either* partner's group has culturally
+///    learned `incest_taboo` -- purely a consequence of the group's own
+///    emergent norm-adoption (law.rs), read here, never set here.
+///
+/// Never reaches exactly zero: even a full-sibling/parent-child pair
+/// remains a possible (just heavily disfavored) pairing, consistent with
+/// `conception_probability`'s own inbreeding penalty being a steep
+/// discount rather than an absolute block.
+fn kinship_mate_weight(candidate: &Individual, female: &Individual, genealogy: &GenealogyIndex, groups: &[Value]) -> f64 {
+    let relationship = coefficient_of_relationship(&female.id, &candidate.id, genealogy);
+    if relationship <= 0.0 {
+        return 1.0;
+    }
+    let mut weight = (1.0 - relationship * 1.5).max(0.05);
+    if group_has_incest_taboo(female.group_id.as_deref(), groups) || group_has_incest_taboo(candidate.group_id.as_deref(), groups) {
+        weight *= 0.2;
+    }
+    weight
+}
+
+/// Weighted-random pick among nearby fertile males -- replaces a plain
+/// uniform choice so kin (see `kinship_mate_weight`) are still reachable,
+/// just disfavored, rather than filtered out entirely.
+fn pick_weighted_mate<'a>(candidates: &[&'a Individual], female: &Individual, genealogy: &GenealogyIndex, groups: &[Value]) -> &'a Individual {
+    let weights: Vec<f64> = candidates.iter().map(|m| kinship_mate_weight(m, female, genealogy, groups)).collect();
+    let total: f64 = weights.iter().sum();
+    if total <= 0.0 {
+        return candidates[rand::thread_rng().gen_range(0..candidates.len())];
+    }
+    let mut pick = rand::random::<f64>() * total;
+    for (candidate, weight) in candidates.iter().zip(weights.iter()) {
+        if pick < *weight {
+            return candidate;
+        }
+        pick -= weight;
+    }
+    candidates[candidates.len() - 1]
 }
 
 /// Average of both alleles at a locus, defaulting to 0.5 (population baseline)
@@ -235,7 +301,7 @@ mod tests {
         let genealogy = empty_genealogy();
         let mut conceived = false;
         for day in 0..1000 {
-            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false);
+            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false, &[]);
             if !newborns.is_empty() {
                 conceived = true;
                 break;
@@ -251,7 +317,7 @@ mod tests {
         female.health.pregnancy = Some(0);
         let genealogy = empty_genealogy();
         for day in 0..200 {
-            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false);
+            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false, &[]);
             assert!(newborns.is_empty(), "a pregnant female must never conceive again");
         }
     }
@@ -262,7 +328,7 @@ mod tests {
         let female = founder_at("female", 0.0);
         let genealogy = empty_genealogy();
         for day in 0..500 {
-            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false);
+            let newborns = check_reproduction(&[&male, &female], day, "sim1", 0, &genealogy, "spring", false, &[]);
             assert!(newborns.is_empty());
         }
     }
@@ -274,7 +340,7 @@ mod tests {
         young_female.x = 0.0;
         let genealogy = empty_genealogy();
         for day in 0..500 {
-            let newborns = check_reproduction(&[&male, &young_female], day, "sim1", 0, &genealogy, "spring", false);
+            let newborns = check_reproduction(&[&male, &young_female], day, "sim1", 0, &genealogy, "spring", false, &[]);
             assert!(newborns.is_empty());
         }
     }
@@ -486,5 +552,89 @@ mod tests {
         let mut ind = Individual { is_dead: true, age_days: Some(25 * 365), ..Default::default() };
         update_mating_urge(&mut ind, &serde_json::json!({}));
         assert!(ind.extra.get("mating_urge").is_none());
+    }
+
+    // ── kinship-aware mate selection ─────────────────────────────────────
+
+    fn sibling_genealogy(sibling_a_id: &str, sibling_b_id: &str, father_id: &str, mother_id: &str) -> GenealogyIndex {
+        use super::super::genome::GenealogyEntry;
+        let mut genealogy = GenealogyIndex::new();
+        genealogy.insert(father_id.to_string(), GenealogyEntry { parent_1_id: None, parent_2_id: None, inbreeding_coeff: 0.0 });
+        genealogy.insert(mother_id.to_string(), GenealogyEntry { parent_1_id: None, parent_2_id: None, inbreeding_coeff: 0.0 });
+        genealogy.insert(
+            sibling_a_id.to_string(),
+            GenealogyEntry { parent_1_id: Some(father_id.to_string()), parent_2_id: Some(mother_id.to_string()), inbreeding_coeff: 0.0 },
+        );
+        genealogy.insert(
+            sibling_b_id.to_string(),
+            GenealogyEntry { parent_1_id: Some(father_id.to_string()), parent_2_id: Some(mother_id.to_string()), inbreeding_coeff: 0.0 },
+        );
+        genealogy
+    }
+
+    #[test]
+    fn an_unrelated_candidate_always_weighs_a_full_one() {
+        let female = founder_at("female", 0.0);
+        let male = founder_at("male", 0.0);
+        assert_eq!(kinship_mate_weight(&male, &female, &empty_genealogy(), &[]), 1.0);
+    }
+
+    #[test]
+    fn a_full_sibling_is_discounted_but_never_reaches_zero() {
+        let mut sibling_a = founder_at("female", 0.0);
+        let mut sibling_b = founder_at("male", 0.0);
+        sibling_a.id = "sib-a".to_string();
+        sibling_b.id = "sib-b".to_string();
+        let genealogy = sibling_genealogy(&sibling_a.id, &sibling_b.id, "father", "mother");
+
+        let weight = kinship_mate_weight(&sibling_b, &sibling_a, &genealogy, &[]);
+        assert!(weight < 1.0, "a full sibling should weigh less than an unrelated candidate");
+        assert!(weight > 0.0, "kinship discount must never reach exactly zero -- a related pairing stays possible, just disfavored");
+    }
+
+    #[test]
+    fn a_groups_learned_incest_taboo_sharpens_the_discount_further() {
+        let mut sibling_a = founder_at("female", 0.0);
+        let mut sibling_b = founder_at("male", 0.0);
+        sibling_a.id = "sib-a".to_string();
+        sibling_b.id = "sib-b".to_string();
+        sibling_a.group_id = Some("band-1".to_string());
+        sibling_b.group_id = Some("band-1".to_string());
+        let genealogy = sibling_genealogy(&sibling_a.id, &sibling_b.id, "father", "mother");
+
+        let no_taboo_weight = kinship_mate_weight(&sibling_b, &sibling_a, &genealogy, &[]);
+        let groups = vec![serde_json::json!({ "id": "band-1", "norms": ["incest_taboo"] })];
+        let taboo_weight = kinship_mate_weight(&sibling_b, &sibling_a, &genealogy, &groups);
+        assert!(taboo_weight < no_taboo_weight, "a group that has culturally learned incest_taboo should discount kin more steeply than instinct alone");
+    }
+
+    #[test]
+    fn an_unrelated_group_members_taboo_never_affects_an_unrelated_pair() {
+        let mut female = founder_at("female", 0.0);
+        let mut male = founder_at("male", 0.0);
+        female.group_id = Some("band-1".to_string());
+        male.group_id = Some("band-1".to_string());
+        let groups = vec![serde_json::json!({ "id": "band-1", "norms": ["incest_taboo"] })];
+        assert_eq!(kinship_mate_weight(&male, &female, &empty_genealogy(), &groups), 1.0);
+    }
+
+    #[test]
+    fn weighted_mate_pick_favors_unrelated_candidates_over_many_draws() {
+        let mut sister = founder_at("female", 0.0);
+        sister.id = "sister".to_string();
+        let mut brother = founder_at("male", 0.0);
+        brother.id = "brother".to_string();
+        let mut stranger = founder_at("male", 0.5);
+        stranger.id = "stranger".to_string();
+        let genealogy = sibling_genealogy(&sister.id, &brother.id, "father", "mother");
+
+        let mut stranger_picks = 0;
+        for _ in 0..500 {
+            let picked = pick_weighted_mate(&[&brother, &stranger], &sister, &genealogy, &[]);
+            if picked.id == stranger.id {
+                stranger_picks += 1;
+            }
+        }
+        assert!(stranger_picks > 250, "an unrelated candidate should be picked more often than a full sibling across many draws");
     }
 }

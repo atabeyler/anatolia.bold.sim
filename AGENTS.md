@@ -307,7 +307,28 @@ Conception = (fertility * ageFactor + mhcBonus - inbreedPenalty*0.5)
   demographicTransition: 1 - (community_lang_stage/6) * 0.3 -- a more
     linguistically advanced community has somewhat lower fertility,
     bounded to at most a 30% reduction at the writing stage (6)
+```
 
+**Kinship-aware mate selection:** before `conception_probability` even runs, a
+female's nearby fertile male candidates are no longer picked uniformly at
+random -- `reproduction::pick_weighted_mate` weighs each candidate by
+`kinship_mate_weight`, which discounts (never to exactly zero) a candidate in
+proportion to `coefficient_of_relationship` with the female. This layers two
+independent, cardinal-rule-compliant mechanisms on top of the existing
+`inbreedPenalty` fertility math above (which still applies afterward, on
+whichever candidate is picked):
+1. An innate, always-on discount (real kin-recognition/Westermarck-style
+   aversion is developmental/instinctual, not learned, so this applies
+   uniformly regardless of culture): `weight = max(1 - relationship*1.5, 0.05)`.
+2. A further `*0.2` discount once *either* partner's group has culturally
+   learned the existing `incest_taboo` norm (law.rs) -- read here, never set
+   here, so the group's own emergent norm-adoption is what actually drives it.
+
+A related pair therefore remains a possible pairing (just a disfavored one),
+consistent with `inbreedPenalty` itself being a steep discount rather than an
+absolute block.
+
+```
 Twin chance     = 0.003 + (fertility - 0.3) * 0.07
 Triplet chance  = twinChance * 0.1
 Mother mortality= max(0.002, 0.06 * (1 - health_resilience) * (90 - min(max_lifespan, 90)) / 90)

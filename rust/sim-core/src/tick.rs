@@ -1011,8 +1011,16 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
     let sim_id = state.id.clone().unwrap_or_default();
     let season = world_value.get("season").and_then(Value::as_str).unwrap_or("spring").to_string();
     let calendar_known = discovered_techs.contains("calendar");
-    let mut conceived =
-        biology::reproduction::check_reproduction(&alive_snapshot, current_day, &sim_id, community_lang_stage, &state.genealogy, &season, calendar_known);
+    let mut conceived = biology::reproduction::check_reproduction(
+        &alive_snapshot,
+        current_day,
+        &sim_id,
+        community_lang_stage,
+        &state.genealogy,
+        &season,
+        calendar_known,
+        &state.groups,
+    );
     // Built once and reused by every id-based lookup below (conception and
     // due-birth processing alike): only new children get pushed onto
     // state.individuals in this block, and only at the end, so indices
