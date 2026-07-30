@@ -210,6 +210,17 @@ fn cause_to_fear_key(cause: &str) -> &'static str {
         "predator" | "wildlife_encounter" => "predator",
         "conflict" => "conflict",
         "infection" => "infection",
+        // AGENTS.md documents `scarcity` as one of the six _fears keys, but
+        // nothing ever actually wrote it -- a starved or dehydrated death's
+        // witnesses fell into the unspecific "general" bucket instead of the
+        // resource-anxiety response that's the obvious fit here.
+        "starvation" | "dehydration" => "scarcity",
+        // Disaster-type deaths (environment::process_disaster's own
+        // dead_ids) already bump the whole population's "disaster" fear
+        // directly; mapping their cause here too keeps a *witnessed*
+        // disaster death consistent with that instead of falling to
+        // "general".
+        "earthquake" | "flood" | "wildfire" | "blizzard_disaster" | "drought_event" => "disaster",
         _ => "general",
     }
 }
@@ -667,13 +678,13 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
 
     // 1. World state (season/weather/resources).
     let mut world_value = serde_json::to_value(&state.world_state).unwrap_or_else(|_| json!({}));
-    environment::update_world_state(&mut world_value, current_day, Some(&discovered_techs));
+    let alive_count_pre = state.individuals.iter().filter(|i| i.alive && !i.is_dead).count();
+    environment::update_world_state(&mut world_value, current_day, Some(&discovered_techs), alive_count_pre);
 
     // 1b. Natural disaster: low-probability organic event per biome/weather,
     // distinct from god-mode interventions. A pending disaster persists in world
     // state across ticks until processed, mirroring the JS engine's behavior.
     let mut events: Vec<Value> = Vec::new();
-    let alive_count_pre = state.individuals.iter().filter(|i| i.alive && !i.is_dead).count();
     if alive_count_pre >= 4 && world_value.get("natural_disaster").map(Value::is_null).unwrap_or(true)
         && rand::random::<f64>() < environment::natural_disaster_probability(&world_value)
     {
@@ -1292,6 +1303,28 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
         events.extend(microbiome::process_microbiome_tick(&mut state.individuals, &world_value, current_day));
     }
     phases.microbiome_outbreak_ms += __t_microbiome_outbreak.elapsed().as_secs_f64() * 1000.0;
+
+    // World state's own `disease_pressure` (read by mortality::compute_daily_death_risk
+    // as a small background risk contribution) used to be written once at
+    // simulation creation and never again, staying flat at its initial 0.1
+    // for the entire run regardless of whether an actual epidemic was
+    // underway. Deriving it here from this tick's real infected fraction
+    // (written into state.world_state directly, since world_value's own
+    // conversion back into state.world_state already happened earlier this
+    // tick, before microbiome processing) means a real outbreak now raises
+    // background mortality risk, and an outbreak's end lets it fall again,
+    // instead of an unchanging constant.
+    let alive_after_microbiome = state.individuals.iter().filter(|i| i.alive && !i.is_dead).count();
+    if alive_after_microbiome > 0 {
+        let infected_count = state
+            .individuals
+            .iter()
+            .filter(|i| i.alive && !i.is_dead)
+            .filter(|i| i.extra.get("infections").and_then(Value::as_array).map(|arr| !arr.is_empty()).unwrap_or(false))
+            .count();
+        let disease_pressure = infected_count as f64 / alive_after_microbiome as f64;
+        state.world_state.extra.insert("disease_pressure".to_string(), json!(disease_pressure));
+    }
 
     // 9b. Prune today's dead out of their group's member_ids. Unlike
     // environment::process_disaster (which already does this for disaster
@@ -2177,6 +2210,36 @@ mod tests {
         assert!(d_infected, "the individual actually within NEARBY_RADIUS of the infected founder should eventually be paired and catch it");
     }
 
+    // ── disease_pressure derived from real infection prevalence ──────────
+
+    #[test]
+    fn an_actual_outbreak_raises_world_state_disease_pressure() {
+        let mut a = Individual { id: "a".to_string(), alive: true, x: 0.0, y: 0.0, ..Default::default() };
+        a.extra.insert("infections".to_string(), json!([{ "pathogen_id": "respiratory_common", "days_remaining": 9999, "infected_day": 0 }]));
+        let b = Individual { id: "b".to_string(), alive: true, x: 0.0, y: 0.0, ..Default::default() };
+        let disabled_engines: HashSet<String> =
+            ["movement", "mortality_roll", "microbiome_outbreak", "reproduction"].iter().map(|s| s.to_string()).collect();
+        let mut state = SimulationState { current_day: 0, individuals: vec![a, b], disabled_engines, ..Default::default() };
+
+        advance_one_day(&mut state);
+
+        let disease_pressure = state.world_state.extra.get("disease_pressure").and_then(Value::as_f64).unwrap_or(0.0);
+        assert!((disease_pressure - 0.5).abs() < 1e-9, "1 infected of 2 alive should yield disease_pressure 0.5, got {disease_pressure}");
+    }
+
+    #[test]
+    fn a_healthy_population_has_zero_disease_pressure_not_a_flat_default() {
+        let a = Individual { id: "a".to_string(), alive: true, x: 0.0, y: 0.0, ..Default::default() };
+        let disabled_engines: HashSet<String> =
+            ["movement", "mortality_roll", "microbiome_outbreak", "reproduction"].iter().map(|s| s.to_string()).collect();
+        let mut state = SimulationState { current_day: 0, individuals: vec![a], disabled_engines, ..Default::default() };
+
+        advance_one_day(&mut state);
+
+        let disease_pressure = state.world_state.extra.get("disease_pressure").and_then(Value::as_f64).unwrap_or(-1.0);
+        assert_eq!(disease_pressure, 0.0, "no infections should yield disease_pressure 0.0, not the old flat 0.1 default");
+    }
+
     // ── are_kin() ────────────────────────────────────────────────────────
 
     #[test]
@@ -2269,6 +2332,64 @@ mod tests {
 
         let predator_fear = state.individuals[0].extra["_fears"]["predator"].as_f64().unwrap_or(0.0);
         assert!(predator_fear > 0.0);
+    }
+
+    #[test]
+    fn a_wildlife_encounter_death_also_raises_predator_fear() {
+        let mut state = crate::state::SimulationState::default();
+        let witness = make_survivor("witness", 0.0, 0.0);
+        let dead = make_deceased("dead", 0.05, 0.0, "wildlife_encounter", 5);
+        state.individuals = vec![witness, dead];
+
+        apply_death_witnessing(&mut state, 6);
+
+        let predator_fear = state.individuals[0].extra["_fears"]["predator"].as_f64().unwrap_or(0.0);
+        assert!(predator_fear > 0.0);
+    }
+
+    #[test]
+    fn starvation_and_dehydration_deaths_raise_scarcity_fear_not_general() {
+        for cause in ["starvation", "dehydration"] {
+            let mut state = crate::state::SimulationState::default();
+            let witness = make_survivor("witness", 0.0, 0.0);
+            let dead = make_deceased("dead", 0.05, 0.0, cause, 5);
+            state.individuals = vec![witness, dead];
+
+            apply_death_witnessing(&mut state, 6);
+
+            let fears = &state.individuals[0].extra["_fears"];
+            assert!(fears.get("scarcity").and_then(Value::as_f64).unwrap_or(0.0) > 0.0, "{cause} should raise scarcity fear");
+            assert!(fears.get("general").is_none(), "{cause} should not fall back to the general bucket");
+        }
+    }
+
+    #[test]
+    fn disaster_type_deaths_raise_disaster_fear_not_general() {
+        for cause in ["earthquake", "flood", "wildfire", "blizzard_disaster", "drought_event"] {
+            let mut state = crate::state::SimulationState::default();
+            let witness = make_survivor("witness", 0.0, 0.0);
+            let dead = make_deceased("dead", 0.05, 0.0, cause, 5);
+            state.individuals = vec![witness, dead];
+
+            apply_death_witnessing(&mut state, 6);
+
+            let fears = &state.individuals[0].extra["_fears"];
+            assert!(fears.get("disaster").and_then(Value::as_f64).unwrap_or(0.0) > 0.0, "{cause} should raise disaster fear");
+            assert!(fears.get("general").is_none(), "{cause} should not fall back to the general bucket");
+        }
+    }
+
+    #[test]
+    fn an_unmapped_cause_still_falls_back_to_general() {
+        let mut state = crate::state::SimulationState::default();
+        let witness = make_survivor("witness", 0.0, 0.0);
+        let dead = make_deceased("dead", 0.05, 0.0, "genetic_disease", 5);
+        state.individuals = vec![witness, dead];
+
+        apply_death_witnessing(&mut state, 6);
+
+        let general_fear = state.individuals[0].extra["_fears"]["general"].as_f64().unwrap_or(0.0);
+        assert!(general_fear > 0.0);
     }
 
     // ── update_water_state() ─────────────────────────────────────────────

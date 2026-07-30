@@ -487,6 +487,16 @@ band, not just 15-44.
 
 8 weather types: `clear rain heavy_rain snow blizzard storm heat_wave drought`
 
+**Density-dependent `human_impact`:** `environment::update_world_state` now takes the current
+living population size and smooths `human_impact` (5%/tick) toward
+`population_size / (food_base * 500)` -- the same carrying-capacity figure
+`compute_resource_pressure` already uses -- and feeds it back into
+`food_abundance` (`base_food - human_impact*0.1`). A crowded band gradually
+lowers its own food ceiling; an emptied one eases back toward zero, never a
+permanent scar. This field used to be inserted once at simulation creation
+and never written again, so it stayed exactly 0 for the entire run -- no
+crowding pressure on the food ceiling ever actually applied.
+
 ## Technology Tree (25 techs)
 
 **Tier 0:** `fire_making stone_tools foraging`
@@ -583,6 +593,15 @@ Trade: two individuals exchange surplus based on needs and reputation. Gini coef
 | fever_tick | 8% | vector |
 | wound_infection | 12% | contact |
 | fungal_skin | 1% | contact |
+
+**`world_state.disease_pressure`** (a small background contribution to
+`mortality::compute_daily_death_risk`, `+disease_pressure*0.0003*env_mult`)
+is now derived each tick from this tick's real infected fraction
+(`infected_count / alive_count`, computed in `tick::advance_one_day` right
+after `microbiome::process_microbiome_tick` runs) instead of the flat `0.1`
+it was created with and never updated again. A real outbreak now raises
+background mortality risk while it's active, and it falls back toward zero
+once the outbreak passes, instead of an unchanging constant.
 
 ## Epigenetics (8 loci)
 
@@ -683,6 +702,12 @@ Movement angle is influenced (in order) by: survival stress (hunger/thirst) → 
 - Death witnessing: kin death → `+0.7 * proximity` to relevant fear; nearby death → `+0.4 * proximity`.
 - Disaster/flood → `_waterFear + 0.3`; predator death → `predator fear`; drowning → `_waterFear + 0.3`.
 - `_waterFear` is inherited: child starts with `(parent1._waterFear + parent2._waterFear) / 2 * 0.45`.
+- `_fears` cause→key mapping (`tick::cause_to_fear_key`): `predator`/`wildlife_encounter` → `predator`;
+  `conflict` → `conflict`; `infection` → `infection`; `starvation`/`dehydration` → `scarcity`;
+  `earthquake`/`flood`/`wildfire`/`blizzard_disaster`/`drought_event` → `disaster`; everything else
+  (`exposure`, `injury`, `genetic_disease`, `old_age`, `birth_complications`) → `general`. `scarcity`
+  used to be documented as one of the six `_fears` keys but nothing ever actually wrote it -- every
+  witnessed death fell into `general` regardless of cause.
 
 ## Client Panels (31)
 

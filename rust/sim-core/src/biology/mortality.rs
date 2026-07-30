@@ -28,8 +28,13 @@ pub enum DeathCause {
     GeneticDisease,
     OldAge,
     Predator,
-    Conflict,
     Drowning,
+    // Intergroup conflict deaths are attributed directly by social.rs (which
+    // writes the "conflict" cause string straight into an individual's
+    // death_cause, bypassing this enum entirely, since the intergroup
+    // conflict mechanic lives outside the ordinary roll_death/determine_cause
+    // path) -- there used to be a `Conflict` variant here too, but
+    // determine_cause never actually constructed it, making it dead code.
 }
 
 /// Target annual mortality rates (prehistoric hunter-gatherer baseline):

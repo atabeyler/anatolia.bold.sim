@@ -81,7 +81,7 @@ pub fn create_world_state(latitude: f64, longitude: f64) -> Value {
     })
 }
 
-pub fn update_world_state(world_state: &mut Value, simulation_day: i32, discovered_techs: Option<&std::collections::HashSet<String>>) {
+pub fn update_world_state(world_state: &mut Value, simulation_day: i32, discovered_techs: Option<&std::collections::HashSet<String>>, population_size: usize) {
     let day_of_year = simulation_day.rem_euclid(365);
     if let Some(obj) = world_state.as_object_mut() {
         obj.insert("day_of_year".to_string(), json!(day_of_year));
@@ -99,7 +99,21 @@ pub fn update_world_state(world_state: &mut Value, simulation_day: i32, discover
         let tamp = ((tmax - tmin) / 3.0).min(15.0);
         obj.insert("temperature".to_string(), json!((tmid + tamp * ((day_of_year as f64 - 80.0) / 365.0 * std::f64::consts::TAU).sin()).round()));
         let season_multiplier = match season { "summer" => 1.3, "winter" => 0.4, "spring" => 0.9, _ => 1.1 };
-        let human_impact = obj.get("human_impact").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        // Density-dependent depletion: this population's own size relative
+        // to this biome's own carrying capacity (same `food * 500` figure
+        // compute_resource_pressure already uses) gradually pushes
+        // human_impact toward how crowded the band actually is, smoothed
+        // (5%/tick) rather than snapping instantly so a single day's
+        // fluctuation doesn't whiplash the food ceiling, and easing back
+        // down (never a permanent scar) once the population later shrinks.
+        // Previously this field was inserted once at simulation creation and
+        // never written again, so it stayed exactly 0 for the entire run --
+        // no crowding pressure on the food ceiling ever actually applied.
+        let carrying_capacity = (food_base * 500.0).max(1.0);
+        let impact_target = (population_size as f64 / carrying_capacity).min(2.0);
+        let prev_human_impact = obj.get("human_impact").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let human_impact = prev_human_impact + (impact_target - prev_human_impact) * 0.05;
+        obj.insert("human_impact".to_string(), json!(human_impact));
         let mut base_food = (food_base * season_multiplier - human_impact * 0.1).max(0.05);
         let mut base_water = water_base;
         let mut tech_food_floor: f64 = 0.05;
@@ -445,7 +459,7 @@ mod tests {
         let mut world = create_world_state(38.0, 35.0);
         let mut saw_non_clear = false;
         for day in 0..2000 {
-            update_world_state(&mut world, day, None);
+            update_world_state(&mut world, day, None, 20);
             if world["current_weather"] != "clear" {
                 saw_non_clear = true;
                 break;
@@ -454,13 +468,68 @@ mod tests {
         assert!(saw_non_clear, "weather should organically change given enough days");
     }
 
+    // ── density-dependent human_impact (previously stuck at 0 forever) ────
+
+    #[test]
+    fn a_crowded_population_gradually_raises_human_impact_above_zero() {
+        // mediterranean's food_base (0.75) gives a carrying_capacity of
+        // 0.75*500 = 375 -- a population of 400 sits just over it.
+        let mut world = create_world_state(38.0, 35.0);
+        assert_eq!(world["human_impact"], json!(0));
+        for day in 0..200 {
+            update_world_state(&mut world, day, None, 400);
+        }
+        assert!(world["human_impact"].as_f64().unwrap_or(0.0) > 0.0, "a population above carrying capacity should raise human_impact above its initial zero");
+    }
+
+    #[test]
+    fn an_empty_population_lets_human_impact_settle_back_toward_zero() {
+        let mut world = create_world_state(38.0, 35.0);
+        for day in 0..200 {
+            update_world_state(&mut world, day, None, 400);
+        }
+        let crowded_impact = world["human_impact"].as_f64().unwrap_or(0.0);
+        assert!(crowded_impact > 0.0);
+        for day in 200..800 {
+            update_world_state(&mut world, day, None, 0);
+        }
+        let settled_impact = world["human_impact"].as_f64().unwrap_or(0.0);
+        assert!(settled_impact < crowded_impact, "human_impact should ease back down once the population that caused it is gone");
+        assert!(settled_impact < 0.01, "human_impact should settle close to zero, got {settled_impact}");
+    }
+
+    #[test]
+    fn human_impact_never_snaps_instantly_to_its_target() {
+        // The 5%/tick smoothing means one single day at a much higher
+        // population size shouldn't already put human_impact near its
+        // asymptotic target.
+        let mut world = create_world_state(38.0, 35.0);
+        update_world_state(&mut world, 0, None, 1000);
+        let after_one_day = world["human_impact"].as_f64().unwrap_or(0.0);
+        assert!(after_one_day > 0.0 && after_one_day < 0.2, "a single tick should only nudge human_impact a little, got {after_one_day}");
+    }
+
+    #[test]
+    fn a_higher_human_impact_lowers_food_abundance() {
+        let mut low = create_world_state(38.0, 35.0);
+        let mut high = create_world_state(38.0, 35.0);
+        for day in 0..300 {
+            update_world_state(&mut low, day, None, 5);
+            update_world_state(&mut high, day, None, 2000);
+        }
+        assert!(
+            high["food_abundance"].as_f64().unwrap() < low["food_abundance"].as_f64().unwrap(),
+            "a heavily overcrowded population should end up with lower food_abundance than a sparse one"
+        );
+    }
+
     #[test]
     fn all_eight_weather_types_are_reachable_across_biomes_and_seasons() {
         let mut seen: HashSet<String> = HashSet::new();
         for biome in ["tundra", "desert", "tropical_rainforest", "mediterranean"] {
             let mut world = json!({ "biome": biome, "weather_days_remaining": 0 });
             for day in 0..3650 {
-                update_world_state(&mut world, day, None);
+                update_world_state(&mut world, day, None, 20);
                 seen.insert(world["current_weather"].as_str().unwrap().to_string());
             }
         }
@@ -472,7 +541,7 @@ mod tests {
     #[test]
     fn weather_days_remaining_counts_down_before_rerolling() {
         let mut world = json!({ "biome": "mediterranean", "current_weather": "rain", "weather_days_remaining": 3 });
-        update_world_state(&mut world, 0, None);
+        update_world_state(&mut world, 0, None, 20);
         assert_eq!(world["weather_days_remaining"], 2);
         assert_eq!(world["current_weather"], "rain", "weather must not reroll before its remaining days elapse");
     }
@@ -481,7 +550,7 @@ mod tests {
     fn snow_and_blizzard_never_occur_in_a_hot_desert_biome() {
         let mut world = json!({ "biome": "desert", "weather_days_remaining": 0 });
         for day in 0..3650 {
-            update_world_state(&mut world, day, None);
+            update_world_state(&mut world, day, None, 20);
             let w = world["current_weather"].as_str().unwrap();
             assert!(w != "snow" && w != "blizzard", "desert should never roll {w}");
         }
@@ -491,7 +560,7 @@ mod tests {
     fn drought_and_heat_wave_never_occur_in_a_frozen_tundra_biome() {
         let mut world = json!({ "biome": "tundra", "weather_days_remaining": 0 });
         for day in 0..3650 {
-            update_world_state(&mut world, day, None);
+            update_world_state(&mut world, day, None, 20);
             let w = world["current_weather"].as_str().unwrap();
             assert!(w != "drought" && w != "heat_wave", "tundra should never roll {w}");
         }
@@ -504,11 +573,11 @@ mod tests {
         let mut drought_world = json!({ "biome": "desert", "weather_days_remaining": 0 });
         let mut saw_reduced_food = false;
         for day in 0..3650 {
-            update_world_state(&mut drought_world, day, None);
+            update_world_state(&mut drought_world, day, None, 20);
             if drought_world["current_weather"] == "drought" {
                 // Compare against a clear-weather baseline for the same day/biome.
                 let mut clear_world = json!({ "biome": "desert", "current_weather": "clear", "weather_days_remaining": 999 });
-                update_world_state(&mut clear_world, day, None);
+                update_world_state(&mut clear_world, day, None, 20);
                 if drought_world["food_abundance"].as_f64().unwrap() < clear_world["food_abundance"].as_f64().unwrap() {
                     saw_reduced_food = true;
                     break;
