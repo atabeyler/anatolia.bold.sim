@@ -92,6 +92,15 @@ A child whose living parent currently leads their group picks up a small, purely
 ### Cross-Simulation Migration
 An explicit, ownership-gated action lets a player carry one individual — full genome, phenotype, epigenome, language and all — from one of their own simulations into another as a new arrival, modeling real inter-population gene flow/migration.
 
+### Kinship-Aware Mate Selection
+Nearby eligible mates are no longer picked uniformly at random: an innate, always-on discount (real kin-recognition/Westermarck-style aversion is developmental, not learned) disfavors close relatives as prospective partners, and a group that has culturally learned the `incest_taboo` norm discounts them further still — layered on top of, not replacing, the existing inbreeding-penalty math applied once a pair is actually chosen.
+
+### Genetics-Sensitive Childhood Mortality
+Populations here rarely build up a large adult/elder cohort, so childhood deaths dominate a lineage's total mortality — yet which of the two dominant childhood causes (misadventure vs. genetic disease) claimed a child used to be decided by age band alone, ignoring the child's own inherited health/toughness entirely. It now shifts with the child's own genetic quality, so founder genome improvements and generational selection actually matter in the age band that determines most of a population's fate.
+
+### Specific Death Causes, Not a Catch-All
+Every death not otherwise explained by disease, starvation, disaster, old age, or a birth complication used to be logged simply as "trauma" — across test runs, roughly half of all deaths fell into that single vague bucket. It's now resolved into the specific circumstance the environment actually supports at the moment of death: exposure (severe cold/heat), a wildlife encounter (scaled to the biome's own predator risk), or the narrower residual of injury.
+
 ---
 
 ## Tech Stack
