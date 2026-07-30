@@ -207,7 +207,7 @@ fn are_kin(a: &crate::state::Individual, b: &crate::state::Individual) -> bool {
 /// `apply_death_witnessing`) rather than under `_fears`.
 fn cause_to_fear_key(cause: &str) -> &'static str {
     match cause {
-        "predator" => "predator",
+        "predator" | "wildlife_encounter" => "predator",
         "conflict" => "conflict",
         "infection" => "infection",
         _ => "general",

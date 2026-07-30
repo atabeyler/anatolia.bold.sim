@@ -133,7 +133,9 @@ export const CAUSE_LABELS: Record<string, TranslationMap> = {
   predator:            { tr: 'yırtıcı hayvan',        en: 'predator',            de: 'Raubtier',             fr: 'prédateur',           ar: 'مفترس' },
   genetic_disease:     { tr: 'genetik hastalık',      en: 'genetic disease',     de: 'Erbkrankheit',         fr: 'maladie génétique',   ar: 'مرض وراثي' },
   infection:           { tr: 'enfeksiyon',             en: 'infection',           de: 'Infektion',            fr: 'infection',           ar: 'عدوى' },
-  trauma:              { tr: 'travma',                 en: 'trauma',              de: 'Trauma',               fr: 'traumatisme',         ar: 'صدمة' },
+  exposure:            { tr: 'soğuk/sıcak çarpması',   en: 'exposure',            de: 'Unterkühlung/Hitzschlag', fr: 'exposition',       ar: 'التعرض للعوامل الجوية' },
+  wildlife_encounter:  { tr: 'yaban hayvanı saldırısı', en: 'wildlife encounter',  de: 'Wildtierbegegnung',    fr: 'rencontre animale',   ar: 'مواجهة حيوان بري' },
+  injury:              { tr: 'yaralanma',              en: 'injury',              de: 'Verletzung',           fr: 'blessure',            ar: 'إصابة' },
   birth_complications: { tr: 'doğum komplikasyonu',   en: 'birth complications', de: 'Geburtskomplikationen',fr: 'complications à la naissance', ar: 'مضاعفات الولادة' },
   conflict:            { tr: 'çatışma',               en: 'conflict',            de: 'Konflikt',             fr: 'conflit',             ar: 'نزاع' },
   drowning:            { tr: 'boğulma',               en: 'drowning',            de: 'Ertrinken',            fr: 'noyade',              ar: 'غرق' },
@@ -443,19 +445,22 @@ const DISASTER_TR: Record<string, string> = {
 const CAUSE_DE: Record<string, string> = {
   starvation: 'Verhungern', dehydration: 'Austrocknung', old_age: 'Alter',
   predator: 'Raubtier', genetic_disease: 'Erbkrankheit', infection: 'Infektion',
-  trauma: 'Trauma', birth_complications: 'Geburtskomplikationen', conflict: 'Konflikt',
+  exposure: 'Unterkühlung/Hitzschlag', wildlife_encounter: 'Wildtierbegegnung', injury: 'Verletzung',
+  birth_complications: 'Geburtskomplikationen', conflict: 'Konflikt',
   drowning: 'Ertrinken', meteor_tsunami: 'Meteoriteneinschlag und Tsunami', unknown: 'Unbekannte Ursache'
 };
 const CAUSE_FR: Record<string, string> = {
   starvation: 'Famine', dehydration: 'Déshydratation', old_age: 'Vieillesse',
   predator: 'Prédateur', genetic_disease: 'Maladie génétique', infection: 'Infection',
-  trauma: 'Traumatisme', birth_complications: 'Complications à la naissance',
+  exposure: 'Exposition', wildlife_encounter: 'Rencontre animale', injury: 'Blessure',
+  birth_complications: 'Complications à la naissance',
   conflict: 'Conflit', drowning: 'noyade', meteor_tsunami: 'impact de météore et tsunami', unknown: 'Cause inconnue'
 };
 const CAUSE_AR: Record<string, string> = {
   starvation: 'مجاعة', dehydration: 'جفاف', old_age: 'الشيخوخة',
   predator: 'مفترس', genetic_disease: 'مرض وراثي', infection: 'عدوى',
-  trauma: 'صدمة', birth_complications: 'مضاعفات الولادة', conflict: 'نزاع',
+  exposure: 'التعرض للعوامل الجوية', wildlife_encounter: 'مواجهة حيوان بري', injury: 'إصابة',
+  birth_complications: 'مضاعفات الولادة', conflict: 'نزاع',
   drowning: 'غرق', meteor_tsunami: 'اصطدام نيزك وتسونامي', unknown: 'سبب مجهول'
 };
 const DISASTER_DE: Record<string, string> = {

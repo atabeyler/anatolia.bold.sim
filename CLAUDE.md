@@ -414,7 +414,7 @@ top of (never replacing) FSHR_01-driven individual fertility.
 
 ## Death Causes
 
-`drowning | dehydration | starvation | infection | old_age | predator | conflict | trauma | genetic_disease | birth_complications`
+`drowning | dehydration | starvation | infection | old_age | predator | conflict | exposure | wildlife_encounter | injury | genetic_disease | birth_complications`
 
 Water drowning risk: +0.003/tick × (1 - waterExperience), while `_inWater` (mortality.rs). Inbreeding coeff >= 0.25 → baseRisk × 1.5 (>=, not >, so a full-sibling/parent-child mating's exact F=0.25 is caught).
 
@@ -433,7 +433,7 @@ genetic_share = clamp(genetic_baseline + (0.5 - genetic_resistance)*0.3
   genetic_baseline: 0.45 for age<5, 0.35 for age<15 (matches the original flat split)
   genetic_resistance = (health_resilience + immune_strength) / 2
   toughness = (endurance + physical_strength) / 2
-trauma_share = 1 - genetic_share
+misadventure_share = 1 - genetic_share
 ```
 
 At population-average genetics (both terms = 0.5) this reduces exactly to
@@ -441,6 +441,34 @@ the original flat split, so only a child whose own genetic_resistance or
 toughness diverges from average sees a different cause distribution --
 tying childhood mortality causes to the same two phenotype quantities the
 adult (15-45) branch already used.
+
+**"Misadventure" is resolved into a specific cause, never a generic bucket:**
+every non-water, non-starvation/dehydration, non-infection, non-old-age,
+non-genetic, non-birth-complication death used to be labeled the single
+catch-all `trauma`, regardless of what actually killed the individual.
+`mortality::resolve_misadventure` now resolves this into one of three
+specific causes from the environment signal actually available at the
+moment of death:
+1. `exposure` -- the current weather is actively dangerous
+   (`weather_cold_risk`/`weather_heat_risk`, environment.rs) -- hypothermia
+   or heatstroke.
+2. `wildlife_encounter` -- otherwise, a chance proportional to this biome's
+   `predator_risk` (bite/sting/goring from a non-apex animal, distinct from
+   an actual large-carnivore kill below).
+3. `injury` -- the residual physical mishap (fall, blunt injury, tool
+   accident) once neither of the above signals applies -- kept as narrow as
+   the available signals allow rather than an unexplained label.
+
+**The dedicated `predator` cause (an actual large-carnivore kill) is no
+longer dead code and no longer age-gated:** it used to require
+`predator_risk > 0.5`, but no biome in the Biomes table below ever reaches
+that (tropical_savanna tops out at exactly 0.50, and the check was a strict
+`>`), so it could never fire in any biome in the game -- and because this
+check ran before the age-band branches, no child or elder could ever be
+recorded as a predator kill even in principle. The threshold is now `> 0.35`
+(reachable in tropical_rainforest/tropical_savanna), and the check still
+runs before any age branching, so it now actually applies across every age
+band, not just 15-44.
 
 ## Biomes
 

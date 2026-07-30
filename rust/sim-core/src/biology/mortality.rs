@@ -9,7 +9,19 @@ use super::individual::get_age;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeathCause {
     Infection,
-    Trauma,
+    /// Hypothermia/heatstroke -- the misadventure roll resolved to actively
+    /// dangerous weather (`weather_cold_risk`/`weather_heat_risk`) at the
+    /// moment of death. See `resolve_misadventure`.
+    Exposure,
+    /// A non-apex-predator animal encounter (bite/sting/goring) -- distinct
+    /// from `Predator`, which represents an actual large-carnivore kill and
+    /// is gated to biomes dangerous enough for that. Scales with the same
+    /// `predator_risk` figure but reachable at any biome's danger level.
+    WildlifeEncounter,
+    /// The residual physical-mishap cause (falls, blunt injury, tool
+    /// accidents) once weather and wildlife signals are ruled out -- kept
+    /// deliberately narrow and honestly named rather than a catch-all.
+    Injury,
     Starvation,
     Dehydration,
     BirthComplications,
@@ -175,9 +187,17 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
     if age >= phenotype.max_lifespan - 5.0 {
         return DeathCause::OldAge;
     }
+    // A dedicated large-carnivore kill -- reachable at any age (this check
+    // runs before the age-band branches below), but only in biomes actually
+    // dangerous enough to plausibly host one. AGENTS.md's Biomes table tops
+    // out at tropical_savanna's 0.50 predator_risk; a strict `> 0.5` gate
+    // here used to mean this branch could never fire in any biome in the
+    // game, and (being above the age branches only in intent, not in code
+    // order before this fix) effectively meant no child or elder could ever
+    // be recorded as a predator kill either.
     let predator_threshold = if is_founder { 0.15 } else { 0.3 };
     let predator_risk = environment.and_then(|env| env.get("predator_risk")).and_then(Value::as_f64).unwrap_or(0.0);
-    if predator_risk > 0.5 && rand::random::<f64>() < predator_threshold {
+    if predator_risk > 0.35 && rand::random::<f64>() < predator_threshold {
         return DeathCause::Predator;
     }
 
@@ -192,7 +212,7 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
     };
 
     let toughness = (phenotype.endurance + phenotype.physical_strength) / 2.0;
-    let trauma_weight = (0.30 - (toughness - 0.5) * 0.20).max(0.05);
+    let misadventure_weight = (0.30 - (toughness - 0.5) * 0.20).max(0.05);
 
     // Young-age mortality used to split Trauma/GeneticDisease on a flat,
     // age-band-only coin flip -- meaning a child's own genetic_resistance
@@ -208,27 +228,26 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
     if age < 5.0 || age < 15.0 {
         let genetic_baseline = if age < 5.0 { 0.45 } else { 0.35 };
         let genetic_share = (genetic_baseline + (0.5 - genetic_resistance) * 0.3 - (0.5 - toughness) * 0.2).clamp(0.1, 0.9);
-        return if rand::random::<f64>() < 1.0 - genetic_share { DeathCause::Trauma } else { DeathCause::GeneticDisease };
+        return if rand::random::<f64>() < 1.0 - genetic_share { resolve_misadventure(environment) } else { DeathCause::GeneticDisease };
     }
 
     let founder_factor = if is_founder { 0.55 } else { 1.0 };
-    let adjusted_trauma = trauma_weight * founder_factor;
+    let adjusted_misadventure = misadventure_weight * founder_factor;
 
     if age < 45.0 {
         let r = rand::random::<f64>();
-        let trauma_cut = adjusted_trauma;
-        let birth_comp_cut = trauma_cut + birth_comp_chance;
+        let misadventure_cut = adjusted_misadventure;
+        let birth_comp_cut = misadventure_cut + birth_comp_chance;
         let genetic_cut = birth_comp_cut + genetic_chance;
         // The leftover probability mass here only gets attributed to a
         // predator kill in proportion to this environment's actual
         // predator_risk -- a predator-free biome (e.g. coastal, risk 0.15)
         // must not have every unattributed adult death blamed on a predator.
-        // Whatever isn't explained by real predator risk falls back to
-        // trauma, the same general "misadventure" bucket used for younger
-        // age bands.
+        // Whatever isn't explained by real predator risk resolves through
+        // the same misadventure logic used for younger age bands.
         let predator_cut = genetic_cut + (predator_risk * 0.3).max(0.0).min(1.0 - genetic_cut);
-        return if r < trauma_cut {
-            DeathCause::Trauma
+        return if r < misadventure_cut {
+            resolve_misadventure(environment)
         } else if r < birth_comp_cut {
             DeathCause::BirthComplications
         } else if r < genetic_cut {
@@ -236,23 +255,50 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
         } else if r < predator_cut {
             DeathCause::Predator
         } else {
-            DeathCause::Trauma
+            resolve_misadventure(environment)
         };
     }
 
     let r = rand::random::<f64>();
     let old_age_cut = 0.20;
-    let trauma_cut = old_age_cut + adjusted_trauma;
-    let genetic_cut = trauma_cut + genetic_chance;
+    let misadventure_cut = old_age_cut + adjusted_misadventure;
+    let genetic_cut = misadventure_cut + genetic_chance;
     if r < old_age_cut {
         DeathCause::OldAge
-    } else if r < trauma_cut {
-        DeathCause::Trauma
+    } else if r < misadventure_cut {
+        resolve_misadventure(environment)
     } else if r < genetic_cut {
         DeathCause::GeneticDisease
     } else {
         DeathCause::OldAge
     }
+}
+
+/// Resolves what used to be a single flat `Trauma` cause into the specific
+/// circumstance the current environment signal actually supports, instead of
+/// an unexplained catch-all label:
+/// 1. Actively dangerous weather (`weather_cold_risk`/`weather_heat_risk`)
+///    -- hypothermia/heatstroke.
+/// 2. Otherwise, a chance proportional to this biome's `predator_risk` of a
+///    smaller, non-apex animal encounter (bite/sting/goring) -- distinct
+///    from the dedicated `Predator` cause above, which requires a biome
+///    dangerous enough to host a large carnivore.
+/// 3. Otherwise, a residual physical mishap (fall, blunt injury, tool
+///    accident) -- kept as narrow as the available signals allow rather
+///    than an unexplained bucket.
+fn resolve_misadventure(environment: Option<&Value>) -> DeathCause {
+    if let Some(env) = environment {
+        let cold_risk = env.get("weather_cold_risk").and_then(Value::as_bool).unwrap_or(false);
+        let heat_risk = env.get("weather_heat_risk").and_then(Value::as_bool).unwrap_or(false);
+        if cold_risk || heat_risk {
+            return DeathCause::Exposure;
+        }
+        let predator_risk = env.get("predator_risk").and_then(Value::as_f64).unwrap_or(0.0);
+        if rand::random::<f64>() < predator_risk * 0.4 {
+            return DeathCause::WildlifeEncounter;
+        }
+    }
+    DeathCause::Injury
 }
 
 trait IndividualExt {
@@ -499,48 +545,53 @@ mod tests {
         ind
     }
 
-    fn trauma_share_over(ind: &Individual, trials: u32) -> f64 {
-        let mut trauma = 0u32;
+    // `env(100.0)` sets no weather_cold_risk/weather_heat_risk/predator_risk
+    // fields, so `resolve_misadventure` always bottoms out at `Injury` here
+    // -- these tests only care about the genetic_share split, not which of
+    // the three misadventure sub-causes gets picked (see the dedicated
+    // `resolve_misadventure` tests below for that).
+    fn misadventure_share_over(ind: &Individual, trials: u32) -> f64 {
+        let mut misadventure = 0u32;
         for _ in 0..trials {
             match determine_cause(ind, 0, Some(&env(100.0))) {
-                DeathCause::Trauma => trauma += 1,
+                DeathCause::Exposure | DeathCause::WildlifeEncounter | DeathCause::Injury => misadventure += 1,
                 DeathCause::GeneticDisease => {}
-                other => panic!("young-age death should only ever be Trauma or GeneticDisease, got {other:?}"),
+                other => panic!("young-age death should only ever be a misadventure cause or GeneticDisease, got {other:?}"),
             }
         }
-        trauma as f64 / trials as f64
+        misadventure as f64 / trials as f64
     }
 
     #[test]
     fn an_under_five_with_average_genetics_matches_the_original_flat_split() {
         let ind = child_with(2, 0.5, 0.5, 0.5, 0.5);
-        let share = trauma_share_over(&ind, 20_000);
-        assert!((share - 0.55).abs() < 0.02, "population-average genetics should reproduce the original 0.55 trauma share, got {share}");
+        let share = misadventure_share_over(&ind, 20_000);
+        assert!((share - 0.55).abs() < 0.02, "population-average genetics should reproduce the original 0.55 misadventure share, got {share}");
     }
 
     #[test]
     fn a_five_to_fifteen_with_average_genetics_matches_the_original_flat_split() {
         let ind = child_with(10, 0.5, 0.5, 0.5, 0.5);
-        let share = trauma_share_over(&ind, 20_000);
-        assert!((share - 0.65).abs() < 0.02, "population-average genetics should reproduce the original 0.65 trauma share, got {share}");
+        let share = misadventure_share_over(&ind, 20_000);
+        assert!((share - 0.65).abs() < 0.02, "population-average genetics should reproduce the original 0.65 misadventure share, got {share}");
     }
 
     #[test]
     fn a_genetically_weak_under_five_dies_of_genetic_disease_more_often() {
         let strong = child_with(2, 0.9, 0.9, 0.5, 0.5);
         let weak = child_with(2, 0.1, 0.1, 0.5, 0.5);
-        let strong_trauma_share = trauma_share_over(&strong, 20_000);
-        let weak_trauma_share = trauma_share_over(&weak, 20_000);
-        assert!(weak_trauma_share < strong_trauma_share, "low genetic_resistance should raise the genetic_disease share (lower the trauma share) relative to a genetically strong child");
+        let strong_share = misadventure_share_over(&strong, 20_000);
+        let weak_share = misadventure_share_over(&weak, 20_000);
+        assert!(weak_share < strong_share, "low genetic_resistance should raise the genetic_disease share (lower the misadventure share) relative to a genetically strong child");
     }
 
     #[test]
-    fn a_frail_child_dies_of_trauma_more_often_than_a_tough_one() {
+    fn a_frail_child_dies_of_misadventure_more_often_than_a_tough_one() {
         let tough = child_with(10, 0.5, 0.5, 0.9, 0.9);
         let frail = child_with(10, 0.5, 0.5, 0.1, 0.1);
-        let tough_trauma_share = trauma_share_over(&tough, 20_000);
-        let frail_trauma_share = trauma_share_over(&frail, 20_000);
-        assert!(frail_trauma_share > tough_trauma_share, "low toughness (endurance/physical_strength) should raise the trauma share relative to a tough child");
+        let tough_share = misadventure_share_over(&tough, 20_000);
+        let frail_share = misadventure_share_over(&frail, 20_000);
+        assert!(frail_share > tough_share, "low toughness (endurance/physical_strength) should raise the misadventure share relative to a tough child");
     }
 
     #[test]
@@ -549,9 +600,63 @@ mod tests {
         // invert or exceed the intended [0.1, 0.9] genetic_share band.
         let extremely_strong = child_with(2, 1.0, 1.0, 1.0, 1.0);
         let extremely_weak = child_with(2, 0.0, 0.0, 0.0, 0.0);
-        let strong_trauma_share = trauma_share_over(&extremely_strong, 20_000);
-        let weak_trauma_share = trauma_share_over(&extremely_weak, 20_000);
-        assert!(strong_trauma_share <= 0.90 + 0.02);
-        assert!(weak_trauma_share >= 0.10 - 0.02);
+        let strong_share = misadventure_share_over(&extremely_strong, 20_000);
+        let weak_share = misadventure_share_over(&extremely_weak, 20_000);
+        assert!(strong_share <= 0.90 + 0.02);
+        assert!(weak_share >= 0.10 - 0.02);
+    }
+
+    // ── resolve_misadventure sub-cause resolution ─────────────────────────
+
+    #[test]
+    fn cold_weather_risk_always_resolves_to_exposure() {
+        let env = serde_json::json!({ "weather_cold_risk": true, "predator_risk": 0.5 });
+        for _ in 0..200 {
+            assert_eq!(resolve_misadventure(Some(&env)), DeathCause::Exposure);
+        }
+    }
+
+    #[test]
+    fn heat_weather_risk_always_resolves_to_exposure() {
+        let env = serde_json::json!({ "weather_heat_risk": true, "predator_risk": 0.5 });
+        for _ in 0..200 {
+            assert_eq!(resolve_misadventure(Some(&env)), DeathCause::Exposure);
+        }
+    }
+
+    #[test]
+    fn no_weather_or_predator_signal_resolves_to_injury() {
+        let env = serde_json::json!({});
+        for _ in 0..200 {
+            assert_eq!(resolve_misadventure(Some(&env)), DeathCause::Injury);
+        }
+    }
+
+    #[test]
+    fn missing_environment_resolves_to_injury() {
+        for _ in 0..200 {
+            assert_eq!(resolve_misadventure(None), DeathCause::Injury);
+        }
+    }
+
+    #[test]
+    fn a_high_predator_risk_biome_sometimes_yields_a_wildlife_encounter() {
+        let env = serde_json::json!({ "predator_risk": 0.5 });
+        let mut saw_wildlife = false;
+        for _ in 0..2000 {
+            if resolve_misadventure(Some(&env)) == DeathCause::WildlifeEncounter {
+                saw_wildlife = true;
+                break;
+            }
+        }
+        assert!(saw_wildlife, "a biome with real predator_risk should occasionally attribute misadventure to a wildlife encounter");
+    }
+
+    #[test]
+    fn a_predator_free_biome_never_yields_a_wildlife_encounter() {
+        let env = serde_json::json!({ "predator_risk": 0.0 });
+        for _ in 0..500 {
+            assert_ne!(resolve_misadventure(Some(&env)), DeathCause::WildlifeEncounter);
+        }
     }
 }
