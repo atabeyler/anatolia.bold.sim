@@ -418,6 +418,30 @@ top of (never replacing) FSHR_01-driven individual fertility.
 
 Water drowning risk: +0.003/tick × (1 - waterExperience), while `_inWater` (mortality.rs). Inbreeding coeff >= 0.25 → baseRisk × 1.5 (>=, not >, so a full-sibling/parent-child mating's exact F=0.25 is caught).
 
+**Childhood cause split (under 15) is phenotype-sensitive, not a flat coin
+flip:** `determine_cause` (mortality.rs) used to split under-5s 55/45 and
+5-14s 65/35 between `trauma`/`genetic_disease` purely by age band, ignoring
+the child's own genetics entirely -- meaning improving a lineage's genetic
+quality (founder genome, generational selection) had zero effect on the age
+band that dominates most populations' total deaths (populations here rarely
+carry a large adult/elder cohort). The split is now:
+
+```
+genetic_share = clamp(genetic_baseline + (0.5 - genetic_resistance)*0.3
+                                        - (0.5 - toughness)*0.2,
+                      0.1, 0.9)
+  genetic_baseline: 0.45 for age<5, 0.35 for age<15 (matches the original flat split)
+  genetic_resistance = (health_resilience + immune_strength) / 2
+  toughness = (endurance + physical_strength) / 2
+trauma_share = 1 - genetic_share
+```
+
+At population-average genetics (both terms = 0.5) this reduces exactly to
+the original flat split, so only a child whose own genetic_resistance or
+toughness diverges from average sees a different cause distribution --
+tying childhood mortality causes to the same two phenotype quantities the
+adult (15-45) branch already used.
+
 ## Biomes
 
 | Biome | Temp range | Food | Water | Predator |

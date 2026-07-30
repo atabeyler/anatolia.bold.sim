@@ -194,11 +194,21 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
     let toughness = (phenotype.endurance + phenotype.physical_strength) / 2.0;
     let trauma_weight = (0.30 - (toughness - 0.5) * 0.20).max(0.05);
 
-    if age < 5.0 {
-        return if rand::random::<f64>() < 0.55 { DeathCause::Trauma } else { DeathCause::GeneticDisease };
-    }
-    if age < 15.0 {
-        return if rand::random::<f64>() < 0.65 { DeathCause::Trauma } else { DeathCause::GeneticDisease };
+    // Young-age mortality used to split Trauma/GeneticDisease on a flat,
+    // age-band-only coin flip -- meaning a child's own genetic_resistance
+    // and toughness (already computed above for the adult branches below)
+    // had zero influence on the age band that produces most of a
+    // population's deaths. Reusing those same two phenotype-derived
+    // quantities here instead makes childhood mortality causes actually
+    // responsive to inherited/genetic quality, same as adulthood already
+    // is. At the population-average genetic_resistance/toughness (0.5),
+    // this reduces exactly to the original flat split (0.45/0.35 genetic
+    // share), so only a child whose own genetics diverge from average sees
+    // a different cause distribution.
+    if age < 5.0 || age < 15.0 {
+        let genetic_baseline = if age < 5.0 { 0.45 } else { 0.35 };
+        let genetic_share = (genetic_baseline + (0.5 - genetic_resistance) * 0.3 - (0.5 - toughness) * 0.2).clamp(0.1, 0.9);
+        return if rand::random::<f64>() < 1.0 - genetic_share { DeathCause::Trauma } else { DeathCause::GeneticDisease };
     }
 
     let founder_factor = if is_founder { 0.55 } else { 1.0 };
@@ -478,5 +488,70 @@ mod tests {
             }
         }
         assert!(saw_dehydration);
+    }
+
+    // ── young-age cause split now tracks genetic_resistance/toughness ────
+
+    fn child_with(age_years: i32, health_resilience: f64, immune_strength: f64, endurance: f64, physical_strength: f64) -> Individual {
+        let mut ind = make_ind(age_years);
+        ind.phenotype = Phenotype { max_lifespan: 70.0, health_resilience, immune_strength, endurance, physical_strength, ..Default::default() };
+        ind.health = Health { hp: 1.0, calories: 1.0, hydration: 1.0, ..Default::default() };
+        ind
+    }
+
+    fn trauma_share_over(ind: &Individual, trials: u32) -> f64 {
+        let mut trauma = 0u32;
+        for _ in 0..trials {
+            match determine_cause(ind, 0, Some(&env(100.0))) {
+                DeathCause::Trauma => trauma += 1,
+                DeathCause::GeneticDisease => {}
+                other => panic!("young-age death should only ever be Trauma or GeneticDisease, got {other:?}"),
+            }
+        }
+        trauma as f64 / trials as f64
+    }
+
+    #[test]
+    fn an_under_five_with_average_genetics_matches_the_original_flat_split() {
+        let ind = child_with(2, 0.5, 0.5, 0.5, 0.5);
+        let share = trauma_share_over(&ind, 20_000);
+        assert!((share - 0.55).abs() < 0.02, "population-average genetics should reproduce the original 0.55 trauma share, got {share}");
+    }
+
+    #[test]
+    fn a_five_to_fifteen_with_average_genetics_matches_the_original_flat_split() {
+        let ind = child_with(10, 0.5, 0.5, 0.5, 0.5);
+        let share = trauma_share_over(&ind, 20_000);
+        assert!((share - 0.65).abs() < 0.02, "population-average genetics should reproduce the original 0.65 trauma share, got {share}");
+    }
+
+    #[test]
+    fn a_genetically_weak_under_five_dies_of_genetic_disease_more_often() {
+        let strong = child_with(2, 0.9, 0.9, 0.5, 0.5);
+        let weak = child_with(2, 0.1, 0.1, 0.5, 0.5);
+        let strong_trauma_share = trauma_share_over(&strong, 20_000);
+        let weak_trauma_share = trauma_share_over(&weak, 20_000);
+        assert!(weak_trauma_share < strong_trauma_share, "low genetic_resistance should raise the genetic_disease share (lower the trauma share) relative to a genetically strong child");
+    }
+
+    #[test]
+    fn a_frail_child_dies_of_trauma_more_often_than_a_tough_one() {
+        let tough = child_with(10, 0.5, 0.5, 0.9, 0.9);
+        let frail = child_with(10, 0.5, 0.5, 0.1, 0.1);
+        let tough_trauma_share = trauma_share_over(&tough, 20_000);
+        let frail_trauma_share = trauma_share_over(&frail, 20_000);
+        assert!(frail_trauma_share > tough_trauma_share, "low toughness (endurance/physical_strength) should raise the trauma share relative to a tough child");
+    }
+
+    #[test]
+    fn the_genetic_disease_share_never_leaves_its_ten_to_ninety_percent_band() {
+        // Extreme genetics in both directions should still clamp, not
+        // invert or exceed the intended [0.1, 0.9] genetic_share band.
+        let extremely_strong = child_with(2, 1.0, 1.0, 1.0, 1.0);
+        let extremely_weak = child_with(2, 0.0, 0.0, 0.0, 0.0);
+        let strong_trauma_share = trauma_share_over(&extremely_strong, 20_000);
+        let weak_trauma_share = trauma_share_over(&extremely_weak, 20_000);
+        assert!(strong_trauma_share <= 0.90 + 0.02);
+        assert!(weak_trauma_share >= 0.10 - 0.02);
     }
 }
