@@ -51,15 +51,21 @@ impl AppState {
                 DbBackend::Postgres(Self::connect_postgres(&database_url).await?)
             }
             // RENDER_EXTERNAL_URL is only ever set by Render itself (see
-            // spawn_self_ping in main.rs) -- it's a reliable signal that this
-            // process is the browser-facing web deploy, not the desktop
-            // sidecar. The browser client must never end up talking to a
+            // spawn_self_ping in main.rs); FLY_APP_NAME is the equivalent
+            // always-set signal on a Fly.io machine (see fly.toml/Dockerfile).
+            // Either one is a reliable signal that this process is a real
+            // browser-facing web deploy, not the desktop sidecar or a local
+            // dev run. The browser client must never end up talking to a
             // throwaway SQLite database (accounts now only exist in
             // Postgres, see auth::is_local_backend), so treat a missing
             // DATABASE_URL here the same as an unreachable one: a loud
-            // startup failure instead of a silently empty fallback DB.
-            _ if std::env::var("RENDER_EXTERNAL_URL").is_ok() => {
-                panic!("DATABASE_URL is required on the web deploy (RENDER_EXTERNAL_URL is set) -- refusing to fall back to a throwaway SQLite database");
+            // startup failure instead of a silently empty fallback DB. This
+            // used to check RENDER_EXTERNAL_URL alone, which meant a Fly.io
+            // deploy missing DATABASE_URL would boot "successfully" straight
+            // into the exact silent-data-loss trap this check exists to
+            // prevent on Render.
+            _ if std::env::var("RENDER_EXTERNAL_URL").is_ok() || std::env::var("FLY_APP_NAME").is_ok() => {
+                panic!("DATABASE_URL is required on the web deploy (RENDER_EXTERNAL_URL or FLY_APP_NAME is set) -- refusing to fall back to a throwaway SQLite database");
             }
             _ => Self::sqlite_backend().await?,
         };

@@ -33,6 +33,11 @@ services:
         - "desktop/**"
         - "client/android/**"
         - ".github/**"
+        # Fly.io deployment config -- irrelevant to Render's own build,
+        # which never reads any of these.
+        - "Dockerfile"
+        - ".dockerignore"
+        - "fly.toml"
     envVars:
       - key: NODE_ENV
         value: production

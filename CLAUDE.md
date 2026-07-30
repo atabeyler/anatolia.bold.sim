@@ -87,7 +87,12 @@ This rule must never be violated. Before adding any logic that sets a property o
 - Simulation: `rust/sim-core` + `rust/sim-server` — runtime loop and DB-backed tick orchestration
 - Client: `client/src/` — Vite + Tailwind, panels in `components/panels/`
 - Desktop: Tauri shell that launches the Rust server locally
-- Deploy: Render.com, auto-deploy on `main` push with native Rust binary
+- Deploy: Render.com, auto-deploy on `main` push with native Rust binary. A Fly.io deployment
+  path also exists (`Dockerfile`, `fly.toml`) as an alternative/parallel target -- not the
+  primary deploy, and not wired into any auto-deploy trigger. `db.rs`'s Postgres-required guard
+  checks both `RENDER_EXTERNAL_URL` and `FLY_APP_NAME` (whichever platform actually set it) so a
+  Fly.io deploy missing `DATABASE_URL` fails loudly at startup instead of silently falling back
+  to a throwaway SQLite database, same as Render already did.
 
 ## WASM-Local Mode (`client/src/wasmLocal/`)
 
