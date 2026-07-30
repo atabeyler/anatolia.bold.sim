@@ -81,7 +81,7 @@ pub fn is_local_backend(state: &AppState) -> bool {
 }
 
 pub fn cloud_api_url() -> String {
-    std::env::var("CLOUD_API_URL").unwrap_or_else(|_| "https://anatolia-sim.onrender.com".to_string())
+    std::env::var("CLOUD_API_URL").unwrap_or_else(|_| "https://anatolia-bold-sim.fly.dev".to_string())
 }
 
 pub fn validate_password(password: &str) -> Option<&'static str> {
@@ -593,8 +593,8 @@ mod tests {
     #[test]
     fn same_origin_web_visit_is_not_cross_origin() {
         // The overwhelming majority of traffic: a browser tab on
-        // anatolia-sim.onrender.com calling its own /api/auth/login.
-        let h = headers(Some("https://anatolia-sim.onrender.com"), Some("anatolia-sim.onrender.com"));
+        // anatolia-bold-sim.fly.dev calling its own /api/auth/login.
+        let h = headers(Some("https://anatolia-bold-sim.fly.dev"), Some("anatolia-bold-sim.fly.dev"));
         assert!(!is_cross_origin_request(&h));
     }
 
@@ -603,7 +603,7 @@ mod tests {
         // The one legitimate cross-origin case: desktop's Yerel/local mode
         // calling the cloud API from its 127.0.0.1 sidecar (see authUrl()
         // in the client).
-        let h = headers(Some("http://127.0.0.1:1420"), Some("anatolia-sim.onrender.com"));
+        let h = headers(Some("http://127.0.0.1:1420"), Some("anatolia-bold-sim.fly.dev"));
         assert!(is_cross_origin_request(&h));
     }
 
@@ -611,7 +611,7 @@ mod tests {
     fn missing_origin_header_defaults_to_same_origin() {
         // Browsers omit Origin on some same-origin requests; without it we
         // have no evidence of cross-origin traffic, so don't assume it.
-        let h = headers(None, Some("anatolia-sim.onrender.com"));
+        let h = headers(None, Some("anatolia-bold-sim.fly.dev"));
         assert!(!is_cross_origin_request(&h));
     }
 
@@ -619,7 +619,7 @@ mod tests {
     fn scheme_difference_alone_is_not_cross_origin() {
         // Origin's scheme (http/https) is irrelevant to SameSite cookie
         // scoping -- only the host:port authority matters.
-        let h = headers(Some("http://anatolia-sim.onrender.com"), Some("anatolia-sim.onrender.com"));
+        let h = headers(Some("http://anatolia-bold-sim.fly.dev"), Some("anatolia-bold-sim.fly.dev"));
         assert!(!is_cross_origin_request(&h));
     }
 
@@ -638,7 +638,7 @@ mod tests {
     fn prod_same_origin_cookie_is_lax_not_none() {
         let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("RENDER", "1");
-        let h = headers(Some("https://anatolia-sim.onrender.com"), Some("anatolia-sim.onrender.com"));
+        let h = headers(Some("https://anatolia-bold-sim.fly.dev"), Some("anatolia-bold-sim.fly.dev"));
         let cookie = cookie_value("tok", &h);
         std::env::remove_var("RENDER");
         assert!(cookie.contains("SameSite=Lax"), "same-origin prod cookie should be Lax, got: {cookie}");
@@ -649,7 +649,7 @@ mod tests {
     fn prod_cross_origin_cookie_is_none() {
         let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("RENDER", "1");
-        let h = headers(Some("http://127.0.0.1:1420"), Some("anatolia-sim.onrender.com"));
+        let h = headers(Some("http://127.0.0.1:1420"), Some("anatolia-bold-sim.fly.dev"));
         let cookie = cookie_value("tok", &h);
         std::env::remove_var("RENDER");
         assert!(cookie.contains("SameSite=None"), "cross-origin prod cookie should be None, got: {cookie}");

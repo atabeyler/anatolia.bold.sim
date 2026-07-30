@@ -33,10 +33,9 @@ pub struct AppState {
 impl AppState {
     pub async fn new() -> Result<Self, sqlx::Error> {
         // Prefer a managed Postgres database (DATABASE_URL) when configured --
-        // it persists independently of the web service's container, unlike the
-        // SQLite fallback below which lives on Render's ephemeral filesystem and
-        // is wiped on every deploy. This is how the pre-migration Node.js backend
-        // stayed persistent on Render's free plan without needing a paid disk.
+        // it persists independently of the web service's container/machine,
+        // unlike the SQLite fallback below which lives on ephemeral local
+        // storage and is wiped on every deploy.
         //
         // When DATABASE_URL *is* set, Postgres is the only acceptable backend --
         // silently falling back to a fresh, empty SQLite database here used to
@@ -45,27 +44,21 @@ impl AppState {
         // (this is exactly what caused a real admin login lockout: nothing in
         // the logs but a warn!, nothing in the UI, just every login failing).
         // Fail startup instead so a Postgres outage is a visible, loud deploy
-        // failure in Render rather than a silent, confusing data loss.
+        // failure rather than a silent, confusing data loss.
         let backend = match std::env::var("DATABASE_URL") {
             Ok(database_url) if !database_url.trim().is_empty() => {
                 DbBackend::Postgres(Self::connect_postgres(&database_url).await?)
             }
-            // RENDER_EXTERNAL_URL is only ever set by Render itself (see
-            // spawn_self_ping in main.rs); FLY_APP_NAME is the equivalent
-            // always-set signal on a Fly.io machine (see fly.toml/Dockerfile).
-            // Either one is a reliable signal that this process is a real
-            // browser-facing web deploy, not the desktop sidecar or a local
-            // dev run. The browser client must never end up talking to a
-            // throwaway SQLite database (accounts now only exist in
+            // FLY_APP_NAME is always set on a running Fly.io machine (see
+            // fly.toml/Dockerfile) -- a reliable signal that this process is
+            // the real browser-facing web deploy, not the desktop sidecar or
+            // a local dev run. The browser client must never end up talking
+            // to a throwaway SQLite database (accounts now only exist in
             // Postgres, see auth::is_local_backend), so treat a missing
             // DATABASE_URL here the same as an unreachable one: a loud
-            // startup failure instead of a silently empty fallback DB. This
-            // used to check RENDER_EXTERNAL_URL alone, which meant a Fly.io
-            // deploy missing DATABASE_URL would boot "successfully" straight
-            // into the exact silent-data-loss trap this check exists to
-            // prevent on Render.
-            _ if std::env::var("RENDER_EXTERNAL_URL").is_ok() || std::env::var("FLY_APP_NAME").is_ok() => {
-                panic!("DATABASE_URL is required on the web deploy (RENDER_EXTERNAL_URL or FLY_APP_NAME is set) -- refusing to fall back to a throwaway SQLite database");
+            // startup failure instead of a silently empty fallback DB.
+            _ if std::env::var("FLY_APP_NAME").is_ok() => {
+                panic!("DATABASE_URL is required on the web deploy (FLY_APP_NAME is set) -- refusing to fall back to a throwaway SQLite database");
             }
             _ => Self::sqlite_backend().await?,
         };
@@ -175,7 +168,7 @@ impl AppState {
     }
 }
 
-// Surfaced on /api/health for visibility without digging through Render
+// Surfaced on /api/health for visibility without digging through deploy
 // logs. Startup now fails outright if DATABASE_URL is set but Postgres is
 // unreachable (see AppState::new above), so by the time this is callable
 // "sqlite" only ever means DATABASE_URL was never configured at all (local/
@@ -916,15 +909,15 @@ pub async fn migrate(backend: &DbBackend) -> Result<(), sqlx::Error> {
 // A simulation's tick loop lives only in this process's in-memory
 // RuntimeManager (runtime.rs) -- it has no persistent record of which
 // simulations it was ticking before a restart. Every deploy (or crash) on
-// Render kills that loop without ever getting a chance to touch the DB, so
+// a Fly.io machine restart kills that loop without ever getting a chance to
+// touch the DB, so
 // a fresh boot otherwise inherits rows stuck reading "running" with nothing
 // actually advancing them: the dashboard's "Canlı İzle" list keeps listing
 // them as live, watching one 404s since no session exists for it, and the
 // owner sees it as unexpectedly "stuck" (has to hit start again to get it
 // moving). An earlier version of this function marked every such row
-// "paused" instead -- simpler, but wrong: on Render's free tier the
-// container restarts often enough (deploys, idle-driven cycling) that it
-// would routinely stop a simulation the owner never asked to pause,
+// "paused" instead -- simpler, but wrong: a machine restart (deploys,
+// crashes) would routinely stop a simulation the owner never asked to pause,
 // forcing a manual restart every time. Restarting each one's tick loop
 // here instead means an in-progress simulation survives a restart exactly
 // like it survived every tick before it -- no click required, and nothing
@@ -1221,7 +1214,7 @@ pub async fn save_state(backend: &DbBackend, state: &SimulationState) -> Result<
 // deleted) and close most of the window by awaiting the loop's exit first,
 // but that guard only works if this process still has that session in its
 // map; a tick loop resumed by a *different* boot (resume_running_simulations
-// racing a delete right around a Render restart) has no such guard. This
+// racing a delete right around a machine restart) has no such guard. This
 // closes the gap structurally instead: if the row's gone, the UPDATE
 // affects zero rows and the caller can stop, full stop, with no path that
 // ever re-inserts it.
@@ -1642,7 +1635,7 @@ pub async fn db_status_counts(backend: &DbBackend, sim_id: &str) -> Result<DbSta
         let checkpoints = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM checkpoints WHERE simulation_id = $1::uuid").bind(sim_id).fetch_one(pool).await?;
         // PGlite (the old Node local mode's embedded Postgres) didn't
         // support pg_database_size -- kept as best-effort here too, though
-        // Render's real Postgres always supports it.
+        // a real managed Postgres instance always supports it.
         let db_size_bytes = sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())").fetch_one(pool).await.ok();
         return Ok(DbStatusCounts { individuals_total, individuals_alive, checkpoints, db_size_bytes });
     }

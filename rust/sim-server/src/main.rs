@@ -54,64 +54,19 @@ async fn cross_origin_isolation_headers(request: Request, next: Next) -> Respons
     response
 }
 
-// Render's free plan spins the whole web service down after ~15 minutes
-// without external traffic; the next request then pays a cold-start (new
-// container + Postgres reconnect) that can take 20-60s and, if it exceeds
-// the request's short window, surfaces to users as spurious login/API
-// failures on the first few attempts. Self-pinging the public URL (which
-// Render always injects as RENDER_EXTERNAL_URL) keeps the instance warm.
-// No-op outside Render (e.g. desktop/local dev), since the env var is unset.
-fn spawn_self_ping() {
-    let Ok(external_url) = std::env::var("RENDER_EXTERNAL_URL") else { return };
-    let health_url = format!("{}/api/health", external_url.trim_end_matches('/'));
-    tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(150)).await;
-            if let Err(err) = client.get(&health_url).send().await {
-                tracing::warn!(error = %err, "self-ping failed");
-            }
-        }
-    });
-}
-
 // Rayon's default global pool sizes itself off the *host* machine's core
-// count (via num_cpus), not the container's actual cgroup CPU quota. On a
-// shared/throttled plan (e.g. Render's free tier) that oversubscribes real
-// CPU time badly -- the tick loop's per-individual par_iter_mut work then
-// contends with the tokio runtime for CPU, and even a trivial handler like
-// /api/health can miss its 5s health-check window while a simulation is
-// ticking at high speed. Capping it keeps parallel tick work from starving
-// the rest of the process. Override with RAYON_NUM_THREADS for tuning.
-//
-// That reasoning only applies to the shared/throttled cloud deployment,
-// though -- this same binary also runs as desktop's and Android "Yerel"
-// mode's local sim-server subprocess, with the device's own cores entirely
-// to itself, no noisy neighbors to protect against. A hardcoded cap of 2
-// there just leaves most of a modern phone's or desktop's cores idle for
-// exactly the per-individual parallel pass (economy/psychology/language/
-// etc.) that's the main CPU cost once a simulation has any real population,
-// which is what a Performance-panel screenshot showing that phase far
-// slower on-device than population size alone would predict turned out to
-// be. RENDER_EXTERNAL_URL is the same signal AppState::new() already uses
-// to detect "this is the Render deployment" -- checked here directly
-// (rather than deriving it from the DB backend) since this runs before
-// AppState::new() decides that.
-/// The Render branch used to hardcode 2 regardless of what the container
-/// actually reports -- fine as a *cap* on a multi-core shared instance, but
-/// wrong as a floor: a real report from a 1-core Render instance showed
-/// `cpu_cores_used: 2` next to `cpu_cores_available: 1`. Forcing a second
-/// rayon worker thread when there's only one real core to run on buys zero
-/// parallelism and pure thread-contention overhead instead -- and that
-/// overhead is now paid several times per tick since the per-individual
-/// pass runs as multiple sequential par_iter_mut stages (see tick.rs's
-/// phase split), not one. `available_parallelism` never forces *more*
-/// threads than the container itself has, only ever caps at 2 on Render.
-fn default_rayon_threads(is_render_deployment: bool, available_parallelism: usize) -> usize {
-    if is_render_deployment {
-        available_parallelism.min(2)
-    } else {
-        available_parallelism
+// count (via num_cpus), not necessarily a shared/throttled container's real
+// cgroup CPU quota. Left fully open (no platform-specific cap) since a Fly.io
+// machine's reported core count matches what it's actually allotted -- this
+// same binary also runs as desktop's and Android "Yerel" mode's local
+// sim-server subprocess, with the device's own cores entirely to itself, so
+// a shared default that just uses everything available serves both cases.
+// Override with RAYON_NUM_THREADS if a specific deployment ever needs tuning.
+fn configure_rayon_thread_pool() {
+    let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    let threads: usize = std::env::var("RAYON_NUM_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(available);
+    if let Err(err) = rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build_global() {
+        tracing::warn!(error = %err, "failed to configure rayon thread pool (already initialized?)");
     }
 }
 
@@ -122,7 +77,7 @@ fn default_rayon_threads(is_render_deployment: bool, available_parallelism: usiz
 // (https://localhost) -- see client/src/utils/cloud.ts's isLocalOrigin().
 // Never an arbitrary attacker-controlled origin.
 fn is_allowed_origin(origin_str: &str) -> bool {
-    if origin_str == "https://anatolia-sim.onrender.com" {
+    if origin_str == "https://anatolia-bold-sim.fly.dev" {
         return true;
     }
     for scheme_host in ["http://127.0.0.1", "https://127.0.0.1", "http://localhost", "https://localhost"] {
@@ -131,15 +86,6 @@ fn is_allowed_origin(origin_str: &str) -> bool {
         }
     }
     false
-}
-
-fn configure_rayon_thread_pool() {
-    let available = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
-    let default_threads = default_rayon_threads(std::env::var("RENDER_EXTERNAL_URL").is_ok(), available);
-    let threads: usize = std::env::var("RAYON_NUM_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(default_threads);
-    if let Err(err) = rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build_global() {
-        tracing::warn!(error = %err, "failed to configure rayon thread pool (already initialized?)");
-    }
 }
 
 // Same host-vs-cgroup oversubscription problem as rayon above: #[tokio::main]'s
@@ -174,13 +120,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // itself, and the test suite relies on that same fallback being stable
     // and always available. Only the cloud/Postgres backend actually mints
     // sessions real accounts rely on, so only it needs this checked loudly
-    // at startup -- Render's render.yaml already generates both automatically;
-    // this guards a self-hosted or misconfigured deployment from silently
-    // signing every session with a secret anyone can read in this file.
+    // at startup -- this guards a self-hosted or misconfigured deployment
+    // from silently signing every session with a secret anyone can read in
+    // this file.
     if !auth::is_local_backend(&state) && (std::env::var("JWT_SECRET").is_err() || std::env::var("JWT_REFRESH_SECRET").is_err()) {
         panic!("JWT_SECRET and JWT_REFRESH_SECRET must both be set when running against the cloud/Postgres backend -- refusing to start with the hardcoded fallback secret.");
     }
-    spawn_self_ping();
     // The refresh-token cookie flow needs credentialed cross-origin requests
     // to work (desktop's Yerel/local mode calls this cloud server's
     // /api/auth/* from the 127.0.0.1 origin, Android's Capacitor webview from
@@ -287,34 +232,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_single_core_render_instance_gets_one_thread_not_two() {
-        assert_eq!(default_rayon_threads(true, 1), 1);
-    }
-
-    #[test]
-    fn render_still_caps_a_multi_core_instance_at_two() {
-        assert_eq!(default_rayon_threads(true, 4), 2);
-        assert_eq!(default_rayon_threads(true, 8), 2);
-    }
-
-    #[test]
-    fn a_two_core_render_instance_gets_exactly_two() {
-        assert_eq!(default_rayon_threads(true, 2), 2);
-    }
-
-    #[test]
-    fn local_deployment_always_uses_every_available_core() {
-        assert_eq!(default_rayon_threads(false, 1), 1);
-        assert_eq!(default_rayon_threads(false, 4), 4);
-        assert_eq!(default_rayon_threads(false, 16), 16);
-    }
-
     // ── CORS allowlist ───────────────────────────────────────────────────
 
     #[test]
     fn the_production_origin_is_allowed() {
-        assert!(is_allowed_origin("https://anatolia-sim.onrender.com"));
+        assert!(is_allowed_origin("https://anatolia-bold-sim.fly.dev"));
     }
 
     #[test]
@@ -332,7 +254,7 @@ mod tests {
     #[test]
     fn an_arbitrary_attacker_controlled_origin_is_rejected() {
         assert!(!is_allowed_origin("https://evil.example.com"));
-        assert!(!is_allowed_origin("http://anatolia-sim.onrender.com.evil.com"));
+        assert!(!is_allowed_origin("http://anatolia-bold-sim.fly.dev.evil.com"));
         assert!(!is_allowed_origin("null"));
     }
 
@@ -341,7 +263,7 @@ mod tests {
         // Regression guard: must be an exact scheme+host (+ optional
         // ":<port>") match, not a substring/prefix check that a
         // similarly-named attacker domain could slip through.
-        assert!(!is_allowed_origin("https://anatolia-sim.onrender.com.attacker.io"));
+        assert!(!is_allowed_origin("https://anatolia-bold-sim.fly.dev.attacker.io"));
         assert!(!is_allowed_origin("https://not-127.0.0.1.attacker.io"));
     }
 

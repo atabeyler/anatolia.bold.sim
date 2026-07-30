@@ -10,9 +10,7 @@ fn admin_email() -> String {
 }
 
 fn app_url() -> String {
-    std::env::var("APP_URL")
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
-        .unwrap_or_else(|_| "http://localhost:3001".to_string())
+    std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3001".to_string())
 }
 
 pub(crate) fn escape_html(value: &str) -> String {

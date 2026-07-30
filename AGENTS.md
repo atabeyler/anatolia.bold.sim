@@ -16,12 +16,13 @@ This rule must never be violated. Before adding any logic that sets a property o
 - Simulation: `rust/sim-core` + `rust/sim-server` — runtime loop and DB-backed tick orchestration
 - Client: `client/src/` — Vite + Tailwind, panels in `components/panels/`
 - Desktop: Tauri shell that launches the Rust server locally
-- Deploy: Render.com, auto-deploy on `main` push with native Rust binary. A Fly.io deployment
-  path also exists (`Dockerfile`, `fly.toml`) as an alternative/parallel target -- not the
-  primary deploy, and not wired into any auto-deploy trigger. `db.rs`'s Postgres-required guard
-  checks both `RENDER_EXTERNAL_URL` and `FLY_APP_NAME` (whichever platform actually set it) so a
-  Fly.io deploy missing `DATABASE_URL` fails loudly at startup instead of silently falling back
-  to a throwaway SQLite database, same as Render already did.
+- Deploy: Fly.io (`Dockerfile` + `fly.toml`, app `anatolia-bold-sim`, production URL
+  `https://anatolia-bold-sim.fly.dev`), built via the same root `npm run build` script every other
+  build consumer uses. `db.rs`'s Postgres-required guard checks `FLY_APP_NAME` (always set on a
+  running Fly.io machine) so a deploy missing `DATABASE_URL` fails loudly at startup instead of
+  silently falling back to a throwaway SQLite database. This project previously deployed on
+  Render.com; that path has been fully retired (no `render.yaml`, no Render-specific code paths
+  remain) in favor of Fly.io.
 
 ## WASM-Local Mode (`client/src/wasmLocal/`)
 
@@ -74,7 +75,7 @@ build share one implementation instead of two that could drift apart.
 
 CI (`wasm-build` job in `.github/workflows/test.yml`) builds and
 native-tests `rust/sim-wasm` on every push/PR so it can't silently bit-rot;
-`npm run build` (used by Render, Desktop, and Android release builds alike)
+`npm run build` (used by Fly.io, Desktop, and Android release builds alike)
 runs `build:wasm` first for the same reason — `worker.ts` statically imports
 the generated package, so any client build breaks outright without it.
 
@@ -811,17 +812,19 @@ engineer would write them.
 
 ## Branch Strategy
 
-All development directly on `main` → push → Render auto-deploys.
+All development directly on `main` → push → Fly.io auto-deploys (the GitHub-connected app rebuilds
+via the `Dockerfile` on every push to `main`).
 
-**Doc-only pushes don't trigger a Render rebuild.** `render.yaml`'s
-`buildFilter.ignoredPaths` skips root markdown docs (`README.md`,
-`AGENTS.md`, `CLAUDE.md`), `desktop/**`, `client/android/**`, and
-`.github/**` -- none of those paths are read by the root `build` script
-(`npm run build`: `build:wasm` + `client/` + `cargo build -p sim-server`),
-so a push touching only them would otherwise still burn a full wasm+client+
-release-Rust rebuild for a byte-identical binary. This exhausted the
-service's free-tier monthly quota once already (2026-07-28, after a run of
-doc-only commits) before the filter was added.
+**No doc-only-push build filter currently exists for Fly.io.** Render's `render.yaml` used to
+declare a `buildFilter.ignoredPaths` list (root markdown docs, `desktop/**`, `client/android/**`,
+`.github/**`) so a push touching only those paths -- none of which the root `build` script
+(`npm run build`: `build:wasm` + `client/` + `cargo build -p sim-server`) reads -- skipped a full
+wasm+client+release-Rust rebuild for a byte-identical binary. Fly.io's GitHub-integration launch
+flow has no equivalent per-path filter, so **every** push to `main`, including doc-only commits,
+currently triggers a full Fly.io rebuild. This was a real, previously-hit cost problem on Render's
+free tier (exhausted its monthly build quota on 2026-07-28 after a run of doc-only commits) -- keep
+this in mind before batching a lot of doc-only commits on Fly.io too, and revisit if Fly.io ever
+exposes a similar path-based build filter.
 
 ## Versioning (desktop + Android release)
 
@@ -838,7 +841,7 @@ for a deliberately bigger jump) — run this **before** pushing, as part of
 the same commit/push that merges the change in, not as a separate follow-up
 commit. Do it as part of the merge, not in a separate CI step or a second
 push: a second push to `main` (e.g. CI committing a version bump back)
-would trigger a second, redundant Render deploy (~6-7 min) for no code
+would trigger a second, redundant Fly.io deploy (~6-7 min) for no code
 change. One push, code + version bump together, one deploy.
 
 This applies to both the desktop app and the Android app: `Desktop Release`
@@ -875,17 +878,20 @@ Android actually uses today.
 fixing every build environment that runs `npm ci`/`npm run build` there** --
 that was tried once (a `file:../rust/sim-wasm/pkg` dependency plus a
 `client/src/engine/wasmEngine.ts` bridge, both since removed), and it broke
-the live Render deploy outright: Render's build environment has no Rust
-`wasm32-unknown-unknown` target or `wasm-pack`, `npm ci` can't resolve a
+the live web deploy outright (on Render at the time; the Dockerfile-based
+Fly.io build today runs the exact same root `npm run build` script and would
+hit the identical failure mode): a build environment with no Rust
+`wasm32-unknown-unknown` target or `wasm-pack` preinstalled can't resolve a
 `file:` dependency whose target directory doesn't exist yet, and nothing in
-`render.yaml`/the Render dashboard build command runs `wasm-pack` first (it
-just runs the root `npm run build` script verbatim). GitHub Actions doesn't
-have this problem since a workflow step can install `wasm-pack` first, but
-Render does. If sim-wasm actually needs wiring into the client in the
-future, either (a) build sim-wasm inside the root `npm run build` script
-itself so every consumer of that script (Render included) picks it up, or
-(b) make the client import lazy/optional so a missing package doesn't fail
-`tsc`/the build.
+the build command runs `wasm-pack` first -- it just runs the root
+`npm run build` script verbatim. GitHub Actions doesn't have this problem
+since a workflow step can install `wasm-pack` first, but a plain
+`npm run build` invocation (Render's old build command, and the Fly.io
+Dockerfile's `RUN npm run build` today) does. If sim-wasm actually needs
+wiring into the client in the future, either (a) build sim-wasm inside the
+root `npm run build` script itself so every consumer of that script (the
+Fly.io Dockerfile included) picks it up, or (b) make the client import
+lazy/optional so a missing package doesn't fail `tsc`/the build.
 
 In-app update check (there's no store to do this for us): `client/src/
 utils/androidUpdate.ts` calls this server's own `/api/updates/android/latest`
@@ -913,7 +919,7 @@ requires them to match). None of these are in the repo; they must be added
 under Settings → Secrets and variables → Actions before the workflow can
 produce a signed APK.
 
-**`GITHUB_RELEASES_TOKEN` (Render env var, optional but required once this
+**`GITHUB_RELEASES_TOKEN` (Fly.io secret, optional but required once this
 repo goes private):** a GitHub token with read access to this repo's
 releases/contents, used only by `releases.rs` to read release metadata and
 download assets server-side on behalf of the Android/desktop update

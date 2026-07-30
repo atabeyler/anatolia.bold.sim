@@ -114,7 +114,7 @@ Every death not otherwise explained by disease, starvation, disaster, old age, o
 | **AI** | Rust heuristics with optional Google Gemini integration (hypothesis testing, civilization analysis, ARIA voice) — falls back to the heuristic path whenever `GEMINI_API_KEY` is unset or a call fails |
 | **Desktop** | Tauri shell launching the Rust server |
 | **Mobile** | Android app (Capacitor), bundling the same Rust server as a native binary |
-| **Deploy** | Render.com native Rust binary (no Node backend) |
+| **Deploy** | Fly.io, native Rust binary in a Docker container (no Node backend at runtime) |
 
 ---
 
@@ -136,7 +136,7 @@ cd client && npm install
 
 ### Database Setup
 
-No `DATABASE_URL` is required for local development — the server falls back to a SQLite file created automatically at `rust/sim.db`. Production (Render) sets `DATABASE_URL` to a managed Postgres instance instead; see `render.yaml`.
+No `DATABASE_URL` is required for local development — the server falls back to a SQLite file created automatically at `rust/sim.db`. Production (Fly.io) sets `DATABASE_URL` to a managed Postgres instance instead; see `fly.toml`/`Dockerfile`.
 
 ```bash
 cd rust
