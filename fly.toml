@@ -3,14 +3,16 @@
 # AGENTS.md's production URL, https://anatolia-bold-sim.fly.dev).
 #
 # primary_region: the app's Postgres database is hosted in Oregon, US West
-# (confirmed via the DB provider's own dashboard) -- "sea" (Seattle) is the
-# closest Fly.io region to it, cutting DB round-trip latency from a
-# transatlantic ~9000km (Amsterdam <-> Oregon) hop down to a same-coast one.
-# This alone only steers where *new* machines get created; an already-running
-# machine in "ams" must still be relocated by hand (see AGENTS.md's Tick
-# pacing section for why that round-trip latency matters here).
+# (confirmed via the DB provider's own dashboard) -- "sjc" (San Jose,
+# California) is the closest region this app's Fly.io plan actually offers
+# (Seattle/"sea" is not in this account's region list), cutting DB
+# round-trip latency from a transatlantic ~9000km (Amsterdam <-> Oregon) hop
+# down to a same-coast one. This alone only steers where *new* machines get
+# created; an already-running machine in "ams" must still be relocated by
+# hand (see AGENTS.md's Tick pacing section for why that round-trip latency
+# matters here).
 app = "anatolia-bold-sim"
-primary_region = "sea"
+primary_region = "sjc"
 
 [build]
 
