@@ -1,16 +1,8 @@
-# Fly.io app config for sim-server (see Dockerfile). App name matches the
-# actual deployed app confirmed via the Fly.io dashboard/Launch UI (see
-# AGENTS.md's production URL, https://anatolia-bold-sim.fly.dev).
+# fly.toml app configuration file generated for anatolia-bold-sim on 2026-07-31T09:39:34Z
 #
-# primary_region: the app's Postgres database is hosted in Oregon, US West
-# (confirmed via the DB provider's own dashboard) -- "sjc" (San Jose,
-# California) is the closest region this app's Fly.io plan actually offers
-# (Seattle/"sea" is not in this account's region list), cutting DB
-# round-trip latency from a transatlantic ~9000km (Amsterdam <-> Oregon) hop
-# down to a same-coast one. This alone only steers where *new* machines get
-# created; an already-running machine in "ams" must still be relocated by
-# hand (see AGENTS.md's Tick pacing section for why that round-trip latency
-# matters here).
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = "anatolia-bold-sim"
 primary_region = "sjc"
 
@@ -26,7 +18,8 @@ primary_region = "sjc"
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
-  processes = ["app"]
+  processes = ['app']
+  checks = [{ grace_period = '10s', interval = '15s', method = 'GET', path = '/api/health', timeout = '5s' }]
 
   [[http_service.checks]]
     interval = "15s"
@@ -36,5 +29,13 @@ primary_region = "sjc"
     path = "/api/health"
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "1gb"
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+
+[[vm]]
+  size = 'performance-cpu-8x'
+  memory = '16gb'
+  cpu_kind = 'performance'
+  cpus = 8
+  memory_mb = 16384
+  processes = ['app']
