@@ -35,6 +35,12 @@ primary_region = "sjc"
     method = "GET"
     path = "/api/health"
 
+# Scaled up via the Fly dashboard (Scale Plan Configuration) to
+# performance-cpu-8x / 16GB -- dedicated (not shared) vCPUs, since
+# sim-core's per-tick compute (rayon-parallelized across the population)
+# and the tick loop's spawn_blocking usage both benefit from real CPU
+# throughput, not just avoiding DB latency (see the primary_region comment
+# above for that half of the fix).
 [[vm]]
   size = "performance-cpu-8x"
   memory = "16gb"
