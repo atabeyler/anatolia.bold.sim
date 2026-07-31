@@ -1,7 +1,7 @@
-# Fly.io app config for sim-server (see Dockerfile). App name here is a
-# placeholder -- `flyctl launch`/the dashboard will ask you to confirm or
-# change it (must be globally unique across all Fly.io apps).
-app = "anatolia-sim"
+# Fly.io app config for sim-server (see Dockerfile). App name matches the
+# actual deployed app confirmed via the Fly.io dashboard/Launch UI (see
+# AGENTS.md's production URL, https://anatolia-bold-sim.fly.dev).
+app = "anatolia-bold-sim"
 primary_region = "ams"
 
 [build]
