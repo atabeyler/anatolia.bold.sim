@@ -698,24 +698,24 @@ an existing panel instead:
 local/SQLite backend only) and its mirror `POST /:id/download-from-cloud`
 (`routes::download_from_cloud`) let a paused/finished simulation cross
 between a local device and the cloud account explicitly, one click at a
-time -- there is no automatic bidirectional sync (the two backends are
-entirely separate databases, see WASM-Local Mode's own db.rs note on
-`FLY_APP_NAME`/`DATABASE_URL`-gated backend selection). Both reuse
-`export_simulation`'s/`import_simulation`'s already-round-trippable shape
-via a shared `insert_simulation_copy` helper (`routes.rs`): the transfer
-always lands as a brand-new simulation row owned by the calling user, never
-overwriting anything on the receiving side, so continuing to play the
-source copy afterward just diverges into two independent simulations. In
-WASM-Local mode (no real local sim-server to host `/download-from-cloud`),
+time. There is no automatic bidirectional sync -- the local and cloud
+backends are entirely separate databases (see WASM-Local Mode's own db.rs
+note on `FLY_APP_NAME`/`DATABASE_URL`-gated backend selection), so
+visibility across them only happens when the player explicitly transfers.
+Both routes reuse `export_simulation`'s/`import_simulation`'s
+round-trippable shape via a shared `insert_simulation_copy` helper
+(`routes.rs`): a transfer always lands as a brand-new simulation row owned
+by the calling user, never overwriting anything on the receiving side, so
+the source copy keeps progressing independently afterward. WASM-Local mode
+has no real local sim-server to host `/download-from-cloud` on, so
 `client/src/wasmLocal/apiAdapter.ts` implements the pull client-side
-instead: it fetches the cloud's `/export` route directly (real `fetch`,
-outside `apiAdapter`'s own interception) and inserts the result into
-IndexedDB itself. `DashboardPage.tsx`'s "BULUT SİMÜLASYONLARI" list (shown
-whenever `showCloudSection` is true -- native Local or WASM-Local) has a
-download button next to "Devam Et" for this; there is currently no reverse
-listing (seeing local/WASM-Local sims from a pure Cloud session), since
-Cloud has no network path to an arbitrary device's local data -- the
-existing "Buluta Yükle" upload button is the way to make a local sim visible
+instead: it fetches the cloud's `/export` route directly and inserts the
+result into IndexedDB. `DashboardPage.tsx`'s "BULUT SİMÜLASYONLARI" list
+(shown whenever `showCloudSection` is true -- native Local or WASM-Local)
+carries the download button next to "Devam Et"; the reverse listing
+(browsing local/WASM-Local sims from a pure Cloud session) isn't offered,
+since Cloud has no network path to an arbitrary device's local data --
+"Buluta Yükle" from the local side is the way to make a local sim visible
 in Cloud.
 
 **Cross-simulation migration:** `POST /api/god/:simId/migrate-individual`
@@ -736,15 +736,13 @@ another user's simulation data.
 evenly across its `batch_size` days, after first reserving a slice
 (`predicted_db_overhead_ms`, the previous iteration's measured load+save
 +upsert time) so DB round trips come out of the same speed budget instead of
-stacking on top of it. On a networked/cloud DB backend, that reserved slice
-can meet or exceed the whole budget -- the per-day delay is now floored at
-`MIN_PER_DAY_DELAY_MS` (8ms) rather than allowed to hit exactly 0, since a
-0ms per-day delay computes the entire batch (up to `speed` days) back-to-back
-in a few milliseconds, sweeping `live_day` from N to N+speed faster than
-ws.rs's 120ms `fast_tick` poll can ever observe an intermediate value -- the
-UI then reads it as one chunky jump of exactly the speed multiplier (e.g.
-"20, 40, 60...") instead of counting up smoothly day by day the way local
-(SQLite-backed, near-zero DB latency) mode already does.
+stacking on top of it. The per-day delay is floored at `MIN_PER_DAY_DELAY_MS`
+(8ms), comfortably above ws.rs's 120ms `fast_tick` poll interval, so
+`live_day` always advances in small visible steps within a batch rather than
+by a full DB-overhead-sized jump -- this floor holds regardless of DB
+backend or how large `predicted_db_overhead_ms` grows, keeping the day
+counter's on-screen behavior the same on a networked/cloud DB backend as on
+local (SQLite-backed, near-zero DB latency) mode.
 
 ## Tick error recovery (`runtime.rs`)
 
