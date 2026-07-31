@@ -736,13 +736,16 @@ another user's simulation data.
 evenly across its `batch_size` days, after first reserving a slice
 (`predicted_db_overhead_ms`, the previous iteration's measured load+save
 +upsert time) so DB round trips come out of the same speed budget instead of
-stacking on top of it. The per-day delay is floored at `MIN_PER_DAY_DELAY_MS`
-(8ms), comfortably above ws.rs's 120ms `fast_tick` poll interval, so
-`live_day` always advances in small visible steps within a batch rather than
-by a full DB-overhead-sized jump -- this floor holds regardless of DB
-backend or how large `predicted_db_overhead_ms` grows, keeping the day
-counter's on-screen behavior the same on a networked/cloud DB backend as on
-local (SQLite-backed, near-zero DB latency) mode.
+stacking on top of it. The per-day delay is floored so the *whole batch's*
+pacing spans at least `MIN_BATCH_SPAN_MS` (500ms) in total, split evenly
+across `batch_size` days -- not each individual day floored to some small
+constant, which would still let a large batch's total span fall well short
+of ws.rs's 120ms `fast_tick` poll interval. This floor only ever raises the
+per-day delay above what the natural (budget-minus-overhead)/batch_size
+share would already give, so a batch with little DB overhead relative to
+its budget is untouched; it only kicks in once overhead has eaten most or
+all of the budget, keeping `live_day` advancing in visible steps across a
+batch instead of by one DB-overhead-sized jump, regardless of DB backend.
 
 ## Tick error recovery (`runtime.rs`)
 
