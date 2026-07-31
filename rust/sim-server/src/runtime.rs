@@ -139,42 +139,38 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
-/// How long to sleep between each individual day inside a batch. Reserves
-/// `predicted_db_overhead_ms` (the *previous* iteration's load+save+upsert
-/// time -- this iteration's own isn't known yet, since save/upsert haven't
-/// run) out of `target_delay_ms` before dividing the rest across the batch.
-/// Skipping that reservation would let per-day pacing alone consume the
-/// entire target_delay_ms, with the DB round trip stacking on top of it
-/// instead of coming out of the same budget -- silently throttling every
-/// speed setting below what's selected, the exact bug PR #101 fixed at the
-/// whole-iteration level, reintroduced one level down by per-day pacing.
+/// How long to sleep between each individual day inside a batch --
+/// `target_delay_ms / batch_size`, the same per-day rate this batch would
+/// have if the DB round trip took zero time. This intentionally does *not*
+/// reserve any DB-overhead slice out of `target_delay_ms` first (an earlier
+/// version did, to keep a whole iteration's *total* wall-clock time close to
+/// `target_delay_ms` even under heavy DB latency -- see PR #101). That
+/// approach optimized the wrong thing: on a slow/networked DB backend,
+/// keeping the total near target_delay_ms meant collapsing the per-day
+/// pacing toward 0 whenever overhead alone met or exceeded the budget, so
+/// the whole batch computed back-to-back in a few milliseconds -- `live_day`
+/// (which ws.rs's fast_tick poll reads every 120ms to drive the on-screen day
+/// counter) swept from N to N+speed faster than any poll could observe an
+/// intermediate value, then sat frozen for the rest of the iteration while
+/// the real DB save/upsert ran. The counter read as one chunky jump of
+/// exactly `speed` days, not a climb.
 ///
-/// The *whole batch's* per-day sleeps are floored to span at least
-/// `MIN_BATCH_SPAN_MS` in total (divided evenly per day), not just each
-/// individual day's sleep floored to some small constant. A per-day floor
-/// alone is the wrong shape: at a large batch_size (high speed), 100 tiny
-/// per-day floors still sum to a span far too short for ws.rs's 120ms
-/// `fast_tick` poll to land more than once inside it, so live_day still
-/// sweeps from N to N+speed in what looks like one jump on screen, with the
-/// counter frozen the rest of the iteration while the real DB save/upsert
-/// happens (a networked/cloud DB backend routinely lets DB overhead alone
-/// consume the whole target_delay_ms budget, driving the naive per-day share
-/// to 0). Spreading a fixed total span instead means several polls land
-/// inside it regardless of batch_size, giving a visibly smooth climb -- while
-/// a batch that already has enough natural per-day budget (overhead is small
-/// relative to target_delay_ms) is untouched, since `max` only ever raises
-/// the per-day delay when the natural share would fall short of it.
-const MIN_BATCH_SPAN_MS: u64 = 500;
-
-fn compute_per_day_delay_ms(target_delay_ms: u64, batch_size: usize, fast_forwarding: bool, predicted_db_overhead_ms: u64) -> u64 {
+/// Pacing at the DB-agnostic rate instead means the day counter always
+/// advances the same visible way a chosen speed implies, matching local
+/// (SQLite, near-zero latency) mode's on-screen behavior exactly -- the
+/// trade-off is that real DB overhead is no longer absorbed into the same
+/// budget: a batch's total wall-clock time becomes DB overhead *plus*
+/// (rather than at most) target_delay_ms, so actual throughput on a
+/// DB-bound backend now falls further below the selected multiplier than
+/// before. That is the honest reflection of the DB being the real
+/// bottleneck; the fix for the underlying slowness is reducing that DB
+/// latency itself (e.g. verifying the Fly machine and its Postgres instance
+/// share a region), not hiding it behind a compressed, jumpy counter.
+fn compute_per_day_delay_ms(target_delay_ms: u64, batch_size: usize, fast_forwarding: bool) -> u64 {
     if fast_forwarding {
         return 0;
     }
-    let batch_size = batch_size.max(1) as u64;
-    let pacing_budget_ms = target_delay_ms.saturating_sub(predicted_db_overhead_ms);
-    let natural_per_day = pacing_budget_ms / batch_size;
-    let min_per_day_for_smooth_span = MIN_BATCH_SPAN_MS / batch_size;
-    natural_per_day.max(min_per_day_for_smooth_span)
+    target_delay_ms / batch_size.max(1) as u64
 }
 
 /// Whether this iteration should actually write to the DB. Not paused always
@@ -676,15 +672,13 @@ async fn runtime_loop(
         // paced *within* a batch. live_day (below) is updated after every
         // single day so a frequent, lightweight websocket poll can show
         // smooth progress even though the DB itself only advances once per
-        // batch. per_day_delay_ms reserves a predicted DB-overhead slice of
-        // target_delay_ms first -- see compute_per_day_delay_ms's own
-        // comment for why (getting this wrong reintroduces the exact "speed
-        // setting throttled below what's selected" bug PR #101 fixed).
-        let predicted_db_overhead_ms = {
-            let timing = tick_timing.lock().unwrap_or_else(|e| e.into_inner());
-            if timing.sample_count > 0 { (timing.last_load_ms + timing.last_save_ms + timing.last_upsert_ms) as u64 } else { 0 }
-        };
-        let per_day_delay_ms = compute_per_day_delay_ms(target_delay_ms, batch_size, fast_forwarding, predicted_db_overhead_ms);
+        // batch. per_day_delay_ms paces at the same rate regardless of DB
+        // latency -- see compute_per_day_delay_ms's own comment for why: DB
+        // overhead is real, additional wall-clock cost on top of this, not a
+        // slice carved out of it, so the day counter always advances the way
+        // the chosen speed implies instead of collapsing to one jump per
+        // batch on a slow DB backend.
+        let per_day_delay_ms = compute_per_day_delay_ms(target_delay_ms, batch_size, fast_forwarding);
 
         // advance_one_day is synchronous, CPU-bound Rust -- with no .await inside
         // this loop, running it directly here would tie up one of this process's
@@ -1041,81 +1035,37 @@ mod tests {
 
     #[test]
     fn fast_forwarding_never_paces() {
-        assert_eq!(compute_per_day_delay_ms(1000, 100, true, 0), 0);
-        assert_eq!(compute_per_day_delay_ms(1000, 100, true, 900), 0);
+        assert_eq!(compute_per_day_delay_ms(1000, 100, true), 0);
     }
 
     #[test]
-    fn with_no_db_overhead_yet_the_whole_budget_is_paced() {
-        // speed=5, batch_size=5 -> target_delay_ms=1000; no prior measurement.
-        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 0), 200);
+    fn paces_at_the_db_agnostic_rate() {
+        // speed=5, batch_size=5 -> target_delay_ms=1000 -> 200ms/day,
+        // regardless of how slow the DB backend actually is (there's no
+        // overhead parameter to feed that in anymore -- see this function's
+        // own doc comment for why).
+        assert_eq!(compute_per_day_delay_ms(1000, 5, false), 200);
     }
 
     #[test]
-    fn known_db_overhead_is_reserved_before_pacing_the_rest() {
-        // 1000ms budget, 5 days, but the DB round trip is predicted to eat
-        // 400ms of it -- pacing should only spend the remaining 600ms
-        // (120ms/day), not the full 1000ms, so the real DB call afterward
-        // doesn't push the iteration past its 1000ms target.
-        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 400), 120);
+    fn the_rate_is_identical_for_any_db_backend_at_the_same_speed() {
+        // The whole point: this function has no notion of DB latency at all,
+        // so a cloud (Postgres, high-latency) backend and a local (SQLite,
+        // near-zero-latency) backend running the same speed setting compute
+        // an identical per-day pacing rate -- only the *additional*,
+        // unpaced DB round-trip time differs between them, not the visible
+        // day-counter cadence.
+        assert_eq!(compute_per_day_delay_ms(1000, 20, false), 50);
+        assert_eq!(compute_per_day_delay_ms(1000, 20, false), compute_per_day_delay_ms(1000, 20, false));
     }
 
     #[test]
-    fn db_overhead_at_or_above_the_whole_budget_still_spans_a_smooth_batch() {
-        // Budget fully (or more than fully) consumed by predicted DB overhead
-        // would naively pace 0ms/day -- MIN_BATCH_SPAN_MS keeps the whole
-        // batch's pacing spanning a fixed total instead (500ms / 5 days =
-        // 100ms/day here), so live_day still advances across enough real
-        // time for a polling client to observe intermediate days (see that
-        // const's own doc comment).
-        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 1000), 100);
-        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 5000), 100);
-    }
-
-    #[test]
-    fn the_smooth_span_floor_scales_down_per_day_as_batch_size_grows() {
-        // A larger batch (higher speed) still only needs MIN_BATCH_SPAN_MS
-        // of *total* span, so each individual day's floor shrinks
-        // proportionally -- a flat per-day floor would instead make a
-        // large batch's total span balloon far past what's needed for
-        // smoothness (and needlessly throttle high speeds when DB overhead
-        // happens to be large).
-        assert_eq!(compute_per_day_delay_ms(1000, 100, false, 5000), 5);
-        assert_eq!(compute_per_day_delay_ms(1000, 100, false, 5000) * 100, MIN_BATCH_SPAN_MS);
-    }
-
-    #[test]
-    fn a_healthy_low_latency_batch_is_never_slowed_by_the_smooth_span_floor() {
-        // When DB overhead is small relative to target_delay_ms (the local/
-        // SQLite case), the naturally-computed per-day share already spans
-        // comfortably more than MIN_BATCH_SPAN_MS -- the floor must never
-        // raise the delay above what pacing alone would already produce.
-        let natural = compute_per_day_delay_ms(1000, 20, false, 0);
-        assert_eq!(natural, 50);
-        assert!(natural * 20 > MIN_BATCH_SPAN_MS);
-    }
-
-    #[test]
-    fn total_iteration_time_matches_target_delay_once_overhead_is_known() {
-        // Simulates two consecutive iterations at speed=20 (batch_size=20,
-        // target_delay_ms=1000): the first has no prior DB-overhead
-        // estimate, so pacing may overshoot; the second, armed with the
-        // first's real overhead, should land within a day's rounding of the
-        // 1000ms target instead of stacking DB time on top of it.
-        let target_delay_ms = 1000;
-        let batch_size = 20;
-        let real_db_overhead_ms = 300;
-
-        let first_pacing = compute_per_day_delay_ms(target_delay_ms, batch_size, false, 0);
-        let first_total = first_pacing * batch_size as u64 + real_db_overhead_ms;
-        assert!(first_total > target_delay_ms, "sanity: with zero prior estimate the first iteration does overshoot");
-
-        let second_pacing = compute_per_day_delay_ms(target_delay_ms, batch_size, false, real_db_overhead_ms);
-        let second_total = second_pacing * batch_size as u64 + real_db_overhead_ms;
-        assert!(
-            second_total.abs_diff(target_delay_ms) <= batch_size as u64,
-            "expected ~{target_delay_ms}ms total, got {second_total}ms"
-        );
+    fn higher_speed_settings_pace_faster_per_day() {
+        let speed_5 = compute_per_day_delay_ms(1000, 5, false);
+        let speed_20 = compute_per_day_delay_ms(1000, 20, false);
+        let speed_100 = compute_per_day_delay_ms(1000, 100, false);
+        assert!(speed_5 > speed_20);
+        assert!(speed_20 > speed_100);
     }
 
     // ── is_due_for_checkpoint() ─────────────────────────────────────────

@@ -803,20 +803,23 @@ another user's simulation data.
 
 ## Tick pacing (`runtime.rs`)
 
-`compute_per_day_delay_ms` spreads each batch's `target_delay_ms` budget
-evenly across its `batch_size` days, after first reserving a slice
-(`predicted_db_overhead_ms`, the previous iteration's measured load+save
-+upsert time) so DB round trips come out of the same speed budget instead of
-stacking on top of it. The per-day delay is floored so the *whole batch's*
-pacing spans at least `MIN_BATCH_SPAN_MS` (500ms) in total, split evenly
-across `batch_size` days -- not each individual day floored to some small
-constant, which would still let a large batch's total span fall well short
-of ws.rs's 120ms `fast_tick` poll interval. This floor only ever raises the
-per-day delay above what the natural (budget-minus-overhead)/batch_size
-share would already give, so a batch with little DB overhead relative to
-its budget is untouched; it only kicks in once overhead has eaten most or
-all of the budget, keeping `live_day` advancing in visible steps across a
-batch instead of by one DB-overhead-sized jump, regardless of DB backend.
+`compute_per_day_delay_ms` spreads `target_delay_ms` evenly across a batch's
+`batch_size` days (`target_delay_ms / batch_size`) -- the same per-day rate
+regardless of DB backend or measured DB latency; it carves no DB-overhead
+slice out of the budget. `live_day` (which ws.rs's fast_tick poll reads every
+120ms to drive the on-screen day counter) therefore always advances at the
+rate the chosen speed implies, matching local (SQLite, near-zero latency)
+mode's on-screen behavior exactly. The trade-off: real DB round-trip time
+(load/save/upsert) is additional wall-clock cost layered on top of
+`target_delay_ms`, not absorbed into the same budget, so a batch's total
+iteration time on a slow/networked DB backend exceeds `target_delay_ms` by
+however long the DB actually took -- actual throughput on such a backend
+falls further below the selected multiplier than a naive reading of "Nx"
+would suggest, an honest reflection of the DB being the real bottleneck
+rather than a smoothed-over number. Fixing that bottleneck directly (e.g.
+verifying the Fly machine and its Postgres instance share a region) is the
+way to close the gap between selected and actual speed; this function's job
+is only to keep the *visible* per-day cadence backend-agnostic.
 
 ## Tick error recovery (`runtime.rs`)
 
