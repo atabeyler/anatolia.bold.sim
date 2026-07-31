@@ -1,8 +1,16 @@
 # Fly.io app config for sim-server (see Dockerfile). App name matches the
 # actual deployed app confirmed via the Fly.io dashboard/Launch UI (see
 # AGENTS.md's production URL, https://anatolia-bold-sim.fly.dev).
+#
+# primary_region: the app's Postgres database is hosted in Oregon, US West
+# (confirmed via the DB provider's own dashboard) -- "sea" (Seattle) is the
+# closest Fly.io region to it, cutting DB round-trip latency from a
+# transatlantic ~9000km (Amsterdam <-> Oregon) hop down to a same-coast one.
+# This alone only steers where *new* machines get created; an already-running
+# machine in "ams" must still be relocated by hand (see AGENTS.md's Tick
+# pacing section for why that round-trip latency matters here).
 app = "anatolia-bold-sim"
-primary_region = "ams"
+primary_region = "sea"
 
 [build]
 
