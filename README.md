@@ -180,6 +180,7 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 - **Reports** — Export a civilization's full history as JSON or a formatted PDF
 - **Performance Diagnostics** — Live tick timing, per-engine phase breakdown, DB status
 - **Live Watch** — Spectate any currently-running simulation, including ones on another device synced from local ("Yerel") mode
+- **Cloud ⇄ Local Transfer** — From a local ("Yerel") or browser dashboard, push any local simulation to your cloud account ("Buluta Yükle"), or pull a cloud simulation down onto the current device ("Yerele İndir"). Each transfer lands as an independent copy — the source keeps running on its own side.
 - **Terminate** — Ends a simulation as an in-fiction disaster (archived, not deleted) rather than simply deleting its history; population extinction is also detected automatically and offered as a termination prompt
 
 ---

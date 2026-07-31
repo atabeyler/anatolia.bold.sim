@@ -433,6 +433,48 @@ async function handleSimulations(path: string, method: string, config: InternalA
     return ok(config, data, res.status);
   }
 
+  // Mirror of /upload-to-cloud, reversed: pulls a cloud simulation the caller
+  // owns (via export_simulation's own already-import-compatible shape, real
+  // fetch since /export isn't in CLOUD_ONLY_ROUTES but is a plain same-origin
+  // route this handler already knows how to reach) and stores it as a
+  // brand-new local IndexedDB simulation. There's no local sim-server in this
+  // mode (unlike native Local), so this can't reuse routes.rs's own
+  // download_from_cloud -- it does the equivalent insert client-side instead.
+  if (method === 'post' && rest === '/download-from-cloud') {
+    const authHeader = authHeaderOf(config);
+    if (!authHeader) fail(config, 401, 'Sign in required.');
+    let res: Response;
+    try {
+      res = await fetch(`/api/simulations/${id}/export`, { headers: { Authorization: authHeader } });
+    } catch (err) {
+      fail(config, 502, err instanceof Error ? err.message : 'Could not reach the cloud.');
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      let data: unknown = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      fail(config, res.status, (data as AnyRecord)?.error as string | undefined ?? res.statusText);
+    }
+    const state = (await res.json()) as AnyRecord;
+    const newId = crypto.randomUUID();
+    state.id = newId;
+    state.status = 'paused';
+    await dbSaveSimulation({
+      id: newId,
+      name: (state.name as string) ?? 'Untitled Simulation',
+      status: 'paused',
+      current_day: (state.current_day as number) ?? 0,
+      current_year: (state.current_year as number) ?? 0,
+      start_latitude: (state.start_latitude as number) ?? 0,
+      start_longitude: (state.start_longitude as number) ?? 0,
+      speed_multiplier: 1,
+      stateJson: JSON.stringify(state),
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    });
+    return ok(config, { simulation_id: newId, name: state.name }, 201);
+  }
+
   fail(config, 404, 'Not found (WASM-local mode)');
 }
 

@@ -172,6 +172,29 @@ export default function DashboardPage() {
     }
   }
 
+  // Mirror of uploadToCloud, pulling the other direction: fetches a cloud
+  // simulation the caller owns down into this device's own local DB (see
+  // routes.rs's download_from_cloud), so a cloud-started sim becomes
+  // playable/watchable offline too, not just cloud-only.
+  async function downloadFromCloud(id: string, name: string) {
+    setUploading(id);
+    try {
+      await axios.post(`/api/simulations/${id}/download-from-cloud`, {}, { headers });
+      alert(text(lang as LangCode, {
+        tr: `"${name}" bu cihaza indirildi. Yerel kopya bu andan itibaren bağımsız ilerler.`,
+        en: `"${name}" was downloaded to this device. The local copy now progresses independently.`,
+        de: `"${name}" wurde auf dieses Gerät heruntergeladen.`,
+        fr: `"${name}" a été téléchargé sur cet appareil.`,
+        ar: `تم تنزيل "${name}" إلى هذا الجهاز.`,
+      }));
+      axios.get('/api/simulations', { headers }).then(r => setSims(r.data));
+    } catch {
+      alert(text(lang as LangCode, { tr: 'Yerele indirme başarısız.', en: 'Download to local failed.', de: 'Download fehlgeschlagen.', fr: 'Échec du téléchargement.', ar: 'فشل التنزيل.' }));
+    } finally {
+      setUploading(null);
+    }
+  }
+
   async function exportSim(id: string, name: string) {
     try {
       const res = await fetch(`/api/simulations/${id}/export`, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -553,18 +576,27 @@ export default function DashboardPage() {
                           {text(lang as LangCode, { tr: 'Yıl', en: 'Year', de: 'Jahr', fr: 'Année', ar: 'سنة' })} {cs.current_year} · {cs.status?.toUpperCase()}
                         </div>
                       </div>
-                      <button
-                        onClick={() => {
-                          // Continues against the cloud backend directly (desktop is
-                          // always online) -- a full cross-origin navigation, since
-                          // this page's own server (local) never touches cloud data.
-                          // The token travels as a one-time query param; App.tsx on
-                          // the cloud side picks it up and signs the session in.
-                          window.location.href = `${CLOUD_API_URL}/simulation/${cs.id}?token=${encodeURIComponent(accessToken || '')}`;
-                        }}
-                        style={{ background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.5)', color: '#a78bfa', padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                        ☁️ {text(lang as LangCode, { tr: 'Devam Et', en: 'Continue', de: 'Fortsetzen', fr: 'Continuer', ar: 'متابعة' })}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            // Continues against the cloud backend directly (desktop is
+                            // always online) -- a full cross-origin navigation, since
+                            // this page's own server (local) never touches cloud data.
+                            // The token travels as a one-time query param; App.tsx on
+                            // the cloud side picks it up and signs the session in.
+                            window.location.href = `${CLOUD_API_URL}/simulation/${cs.id}?token=${encodeURIComponent(accessToken || '')}`;
+                          }}
+                          style={{ background: 'rgba(124,58,237,0.2)', border: '1px solid rgba(124,58,237,0.5)', color: '#a78bfa', padding: '6px 14px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                          ☁️ {text(lang as LangCode, { tr: 'Devam Et', en: 'Continue', de: 'Fortsetzen', fr: 'Continuer', ar: 'متابعة' })}
+                        </button>
+                        <button
+                          disabled={uploading === cs.id}
+                          onClick={() => downloadFromCloud(cs.id, cs.name)}
+                          title={text(lang as LangCode, { tr: 'Bu cihaza indir', en: 'Download to this device', de: 'Auf dieses Gerät herunterladen', fr: 'Télécharger sur cet appareil', ar: 'تنزيل إلى هذا الجهاز' })}
+                          style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.4)', color: '#4ade80', padding: '6px 10px', borderRadius: 6, fontSize: 12, cursor: uploading === cs.id ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                          <Download size={14} />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

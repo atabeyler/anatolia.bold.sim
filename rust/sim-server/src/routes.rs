@@ -35,6 +35,7 @@ use crate::db::{
     upsert_individuals,
     upsert_live_snapshot,
     AppState,
+    DbBackend,
 };
 use sim_core::{
     advance_one_day, age_years, derive_stats, individual_display_name, pascal_to_snake, serialize_individual, to_client_event,
@@ -99,6 +100,7 @@ pub fn simulation_routes() -> Router<AppState> {
         .route("/live/:simId", get(get_live_snapshot))
         .route("/import", post(import_simulation))
         .route("/:id/upload-to-cloud", post(upload_to_cloud))
+        .route("/:id/download-from-cloud", post(download_from_cloud))
         .route("/:id/live-sync-tick", post(live_sync_tick))
         .route("/:id", get(get_simulation))
         .route("/:id/stats", get(get_stats))
@@ -272,7 +274,7 @@ async fn list_live(State(state): State<AppState>) -> impl IntoResponse {
 async fn import_simulation(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
-    Json(mut sim): Json<SimulationState>,
+    Json(sim): Json<SimulationState>,
 ) -> impl IntoResponse {
     let Some(claims) = authenticate(&state, &headers).await else {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign in required."}))).into_response();
@@ -284,9 +286,20 @@ async fn import_simulation(
     if !state.rate_limiter.check(&format!("import:{}", claims.id), 20, std::time::Duration::from_secs(15 * 60)) {
         return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "Too many imports. Please try again later."}))).into_response();
     }
+    match insert_simulation_copy(&state.backend, claims.id, sim).await {
+        Ok((new_id, name)) => (StatusCode::CREATED, Json(json!({"simulation_id": new_id, "name": name}))).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    }
+}
+
+// Shared by import_simulation (push from a local device) and
+// download_from_cloud (pull from the cloud) -- both land a full simulation
+// snapshot as a brand-new row owned by the calling user, never overwriting
+// an existing simulation on the receiving side.
+async fn insert_simulation_copy(backend: &DbBackend, user_id: String, mut sim: SimulationState) -> Result<(String, Option<String>), sqlx::Error> {
     let new_id = Uuid::new_v4().to_string();
     sim.id = Some(new_id.clone());
-    sim.user_id = Some(claims.id);
+    sim.user_id = Some(user_id);
     sim.status = Some("paused".to_string());
     // Trust the uploaded individuals list itself, not whatever total_ever_born
     // the uploading client happened to send (an older client may not know the
@@ -295,11 +308,50 @@ async fn import_simulation(
     // at creation" invariant applies here exactly as it does for a fresh sim.
     sim.total_ever_born = sim.individuals.len() as i32;
 
-    match save_state(&state.backend, &sim).await {
-        Ok(_) => {
-            let _ = upsert_individuals(&state.backend, &sim, true).await;
-            (StatusCode::CREATED, Json(json!({"simulation_id": new_id, "name": sim.name}))).into_response()
-        }
+    save_state(backend, &sim).await?;
+    let _ = upsert_individuals(backend, &sim, true).await;
+    Ok((new_id, sim.name))
+}
+
+// Local-device half of a "Yerelе İndir" (Download to Local) action, the
+// mirror of upload_to_cloud below: pulls a simulation the caller owns from
+// the cloud (via export_simulation's already-import-compatible shape) and
+// inserts it as a brand-new local simulation, the same way import_simulation
+// does for an upload pushed the other direction. Only meaningful for the
+// local/SQLite backend; the cloud backend has nothing further to download
+// from (mirrors upload_to_cloud's own is_local_backend guard).
+async fn download_from_cloud(State(state): State<AppState>, Path(id): Path<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !is_local_backend(&state) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "This simulation is already in the cloud."}))).into_response();
+    }
+    let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign in required."}))).into_response();
+    };
+    let Some(claims) = authenticate(&state, &headers).await else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Sign in required."}))).into_response();
+    };
+
+    let client = reqwest::Client::new();
+    let resp = match client.get(format!("{}/api/simulations/{}/export", cloud_api_url(), id)).bearer_auth(token).send().await {
+        Ok(resp) => resp,
+        Err(err) => return (StatusCode::BAD_GATEWAY, Json(json!({"error": format!("Could not reach the cloud: {err}")}))).into_response(),
+    };
+    let status = resp.status();
+    if !status.is_success() {
+        let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
+        return (StatusCode::BAD_GATEWAY, Json(json!({"error": body.get("error").cloned().unwrap_or_else(|| json!("Cloud download failed."))}))).into_response();
+    }
+    let sim: SimulationState = match resp.json().await {
+        Ok(sim) => sim,
+        Err(err) => return (StatusCode::BAD_GATEWAY, Json(json!({"error": format!("Cloud returned an unreadable simulation: {err}")}))).into_response(),
+    };
+
+    match insert_simulation_copy(&state.backend, claims.id, sim).await {
+        Ok((new_id, name)) => (StatusCode::CREATED, Json(json!({"simulation_id": new_id, "name": name}))).into_response(),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
     }
 }

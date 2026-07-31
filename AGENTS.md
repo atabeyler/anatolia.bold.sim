@@ -685,12 +685,38 @@ an existing panel instead:
                    /:id/legends — record-holder spotlight (see below)
                    /:id/documentary — AI-narrated history (see below)
                    /compare — read-only side-by-side stats for two owned simulations (?a=&b=)
+                   /:id/upload-to-cloud — local-only: push a local sim into the cloud (see below)
+                   /:id/download-from-cloud — cloud-only reachable, local-side insert: pull a cloud sim onto this device (see below)
 /api/god         — founder interventions (God Mode)
                    /:simId/migrate-individual — cross-simulation migration/gene flow (see below)
 /api/aria        — AI hypothesis evaluation
 /api/analysis    — statistical analysis
 /api/admin       — seed-admin
 ```
+
+**Local ⇄ cloud transfer:** `POST /:id/upload-to-cloud` (`routes::upload_to_cloud`,
+local/SQLite backend only) and its mirror `POST /:id/download-from-cloud`
+(`routes::download_from_cloud`) let a paused/finished simulation cross
+between a local device and the cloud account explicitly, one click at a
+time -- there is no automatic bidirectional sync (the two backends are
+entirely separate databases, see WASM-Local Mode's own db.rs note on
+`FLY_APP_NAME`/`DATABASE_URL`-gated backend selection). Both reuse
+`export_simulation`'s/`import_simulation`'s already-round-trippable shape
+via a shared `insert_simulation_copy` helper (`routes.rs`): the transfer
+always lands as a brand-new simulation row owned by the calling user, never
+overwriting anything on the receiving side, so continuing to play the
+source copy afterward just diverges into two independent simulations. In
+WASM-Local mode (no real local sim-server to host `/download-from-cloud`),
+`client/src/wasmLocal/apiAdapter.ts` implements the pull client-side
+instead: it fetches the cloud's `/export` route directly (real `fetch`,
+outside `apiAdapter`'s own interception) and inserts the result into
+IndexedDB itself. `DashboardPage.tsx`'s "BULUT SİMÜLASYONLARI" list (shown
+whenever `showCloudSection` is true -- native Local or WASM-Local) has a
+download button next to "Devam Et" for this; there is currently no reverse
+listing (seeing local/WASM-Local sims from a pure Cloud session), since
+Cloud has no network path to an arbitrary device's local data -- the
+existing "Buluta Yükle" upload button is the way to make a local sim visible
+in Cloud.
 
 **Cross-simulation migration:** `POST /api/god/:simId/migrate-individual`
 (`god::migrate_individual`, body `{ source_simulation_id, individual_id }`)
@@ -703,6 +729,22 @@ fresh-arrival baseline, and the arrival never gets `is_founder` -- an
 explicit, rare player action, never anything the tick loop triggers on its
 own. Requires ownership of *both* simulations, so this can never exfiltrate
 another user's simulation data.
+
+## Tick pacing (`runtime.rs`)
+
+`compute_per_day_delay_ms` spreads each batch's `target_delay_ms` budget
+evenly across its `batch_size` days, after first reserving a slice
+(`predicted_db_overhead_ms`, the previous iteration's measured load+save
++upsert time) so DB round trips come out of the same speed budget instead of
+stacking on top of it. On a networked/cloud DB backend, that reserved slice
+can meet or exceed the whole budget -- the per-day delay is now floored at
+`MIN_PER_DAY_DELAY_MS` (8ms) rather than allowed to hit exactly 0, since a
+0ms per-day delay computes the entire batch (up to `speed` days) back-to-back
+in a few milliseconds, sweeping `live_day` from N to N+speed faster than
+ws.rs's 120ms `fast_tick` poll can ever observe an intermediate value -- the
+UI then reads it as one chunky jump of exactly the speed multiplier (e.g.
+"20, 40, 60...") instead of counting up smoothly day by day the way local
+(SQLite-backed, near-zero DB latency) mode already does.
 
 ## Tick error recovery (`runtime.rs`)
 

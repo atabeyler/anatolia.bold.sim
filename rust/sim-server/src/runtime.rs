@@ -148,12 +148,26 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// instead of coming out of the same budget -- silently throttling every
 /// speed setting below what's selected, the exact bug PR #101 fixed at the
 /// whole-iteration level, reintroduced one level down by per-day pacing.
+/// Floor applied to every per-day pacing sleep, even when `predicted_db_overhead_ms`
+/// consumes the whole `target_delay_ms` budget (a networked/cloud DB backend
+/// routinely does, see this function's own tests). Without it,
+/// `compute_per_day_delay_ms` returns 0 for the *entire* batch whenever DB
+/// overhead alone meets or exceeds the budget, so all `batch_size` days
+/// compute back-to-back in a few milliseconds -- `live_day` (the field
+/// ws.rs's fast_tick polls to show a smooth day counter) then sweeps from N
+/// to N+speed faster than that poll can ever observe a value in between, and
+/// the UI reads it as one chunky jump of exactly `speed` days followed by a
+/// stall while the batch's real DB save/upsert happens. Matches this loop's
+/// own fast_tick poll interval (ws.rs) with headroom, so at least a couple of
+/// polls land mid-batch regardless of how DB-bound this iteration is.
+const MIN_PER_DAY_DELAY_MS: u64 = 8;
+
 fn compute_per_day_delay_ms(target_delay_ms: u64, batch_size: usize, fast_forwarding: bool, predicted_db_overhead_ms: u64) -> u64 {
     if fast_forwarding {
         return 0;
     }
     let pacing_budget_ms = target_delay_ms.saturating_sub(predicted_db_overhead_ms);
-    pacing_budget_ms / batch_size.max(1) as u64
+    (pacing_budget_ms / batch_size.max(1) as u64).max(MIN_PER_DAY_DELAY_MS)
 }
 
 /// Whether this iteration should actually write to the DB. Not paused always
@@ -1040,9 +1054,14 @@ mod tests {
     }
 
     #[test]
-    fn db_overhead_at_or_above_the_whole_budget_paces_zero_not_negative() {
-        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 1000), 0);
-        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 5000), 0);
+    fn db_overhead_at_or_above_the_whole_budget_paces_the_floor_not_negative() {
+        // Budget fully (or more than fully) consumed by predicted DB overhead
+        // would naively pace 0ms/day -- MIN_PER_DAY_DELAY_MS keeps a small
+        // floor instead, so live_day still advances slowly enough for a
+        // polling client to observe intermediate days (see that const's own
+        // doc comment).
+        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 1000), MIN_PER_DAY_DELAY_MS);
+        assert_eq!(compute_per_day_delay_ms(1000, 5, false, 5000), MIN_PER_DAY_DELAY_MS);
     }
 
     #[test]
