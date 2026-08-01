@@ -36,11 +36,15 @@ primary_region = "sjc"
     path = "/api/health"
 
 # Scaled up via the Fly dashboard (Scale Plan Configuration) to
-# performance-cpu-8x / 16GB -- dedicated (not shared) vCPUs, since
+# performance-8x / 16GB -- dedicated (not shared) vCPUs, since
 # sim-core's per-tick compute (rayon-parallelized across the population)
 # and the tick loop's spawn_blocking usage both benefit from real CPU
 # throughput, not just avoiding DB latency (see the primary_region comment
-# above for that half of the fix).
+# above for that half of the fix). "performance-cpu-8x" (an extra "-cpu"
+# that snuck in during an earlier fly.toml cleanup) is not a real Fly.io
+# machine size -- `flyctl` rejects it outright ("invalid machine size"),
+# which silently failed every release built from that config while the
+# app kept serving whatever machine was already running beforehand.
 [[vm]]
-  size = "performance-cpu-8x"
+  size = "performance-8x"
   memory = "16gb"
