@@ -191,8 +191,20 @@ export default function NativeModeGate({ children }: { children: React.ReactNode
     );
   }
 
+  // Mirrors chooseLocal below rather than navigating the WebView away to
+  // CLOUD_API_URL: a real window.location.href navigation tears down this
+  // whole document (React state included), and the freshly-loaded page --
+  // still inside the same Capacitor WebView -- boots straight back into
+  // this same chooser with `ready` reset to false, looking exactly like
+  // nothing happened when "Cloud" is tapped. Staying on the app's own
+  // bundled origin and just pointing axios at the cloud API instead relies
+  // on the same credentialed cross-origin path server-side CORS already
+  // carves out for this WebView's own origin (main.rs's is_allowed_origin,
+  // "https://localhost") -- no navigation, no reset, no allowNavigation
+  // entry needed for this specific flow.
   const chooseCloud = () => {
-    window.location.href = CLOUD_API_URL;
+    axios.defaults.baseURL = CLOUD_API_URL;
+    setReady(true);
   };
 
   const chooseLocal = async () => {
