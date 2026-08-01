@@ -1,0 +1,33 @@
+[package]
+name = "sim-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "sim_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sim-core-cli"
+path = "src/bin/sim-core-cli.rs"
+
+[dependencies]
+rand = "0.8"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["serde", "v4"] }
+# std::time::Instant::now() panics at runtime on wasm32-unknown-unknown (no
+# clock source there, unlike native or wasm32-wasi) -- web-time re-exports
+# std::time::Instant unchanged on native, and backs it with the JS
+# Performance.now() API on wasm32-unknown-unknown, with no call-site changes.
+web-time = "1"
+
+# rand/uuid's v4 generation both bottom out in getrandom, which has no OS to
+# ask for entropy on wasm32-unknown-unknown by default -- the "js" feature
+# routes it through the browser/WebView's crypto.getRandomValues() instead.
+# Native builds (sim-server, sim-core-cli) are unaffected: this dependency
+# and feature only apply when actually targeting wasm32.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1", features = ["serde", "v4", "js"] }

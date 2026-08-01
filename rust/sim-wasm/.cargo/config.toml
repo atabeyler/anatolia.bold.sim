@@ -1,0 +1,53 @@
+# Required for wasm-bindgen-rayon's real Web Worker thread pool: SharedArrayBuffer
+# support needs a wasm32 std built with these two target features, which
+# only `-Z build-std` (a nightly-only cargo flag) can do -- see sim-wasm's own
+# Cargo.toml comment on the wasm-bindgen-rayon dependency for why there's no
+# stable-Rust path to this. Matches wasm-bindgen-rayon's own README exactly
+# (its lib.rs compile_error! specifically checks for `atomics`).
+#
+# `+atomics`/`+bulk-memory` alone are not enough on their own, even though
+# that's all the README's own snippet lists -- confirmed by testing this
+# locally, in order:
+#   1. The compiled .wasm module's own linear memory comes out as an ordinary
+#      (non-shared) WebAssembly.Memory unless the linker is told explicitly
+#      to mark it shared, which additionally requires a declared max size
+#      (growable *shared* memory needs a fixed upper bound up front, unlike
+#      ordinary memory) -- without `--shared-memory`/`--max-memory`,
+#      `initThreadPool` fails with `DataCloneError: #<Memory> could not be
+#      cloned` the moment it tries to postMessage that memory to a spawned
+#      worker, and silently falls back to single-threaded (see worker.ts's
+#      own catch around initThreadPool). 2GiB is comfortably above what this
+#      simulation's population data needs.
+#   2. wasm-bindgen's own (not wasm-bindgen-rayon's) threads post-processing
+#      pass -- which injects per-thread stack/TLS setup into the module at
+#      `wasm-bindgen` CLI time, not at `cargo build` time -- needs several
+#      linker-synthesized symbols to actually be *exported* from the module,
+#      not merely present in it: `wasm-ld` only auto-exports what's reachable
+#      from Rust's own code, and nothing in this crate ever touches thread-
+#      locals directly, so these all go unexported by default (`+mutable-
+#      globals` is required alongside them, for `__tls_base` specifically, as
+#      a WebAssembly *mutable global* rather than a linear-memory value).
+#      Discovered one at a time locally, each failing "failed to prepare
+#      module for threading: failed to find `X`" until all were listed.
+#   3. `--import-memory`: that same pass also asserts the module *imports*
+#      its memory (the standard multi-threaded-wasm pattern -- the JS host
+#      creates one shared `WebAssembly.Memory` and hands it to every thread's
+#      module instance) rather than defining/exporting its own, which is
+#      what a normal (non-threaded) wasm-bindgen build does by default.
+#      wasm-bindgen's own generated JS handles creating and wiring up that
+#      shared memory once it sees this.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+  "-C", "link-arg=--shared-memory",
+  "-C", "link-arg=--max-memory=2147483648",
+  "-C", "link-arg=--export=__heap_base",
+  "-C", "link-arg=--export=__wasm_init_tls",
+  "-C", "link-arg=--export=__tls_size",
+  "-C", "link-arg=--export=__tls_align",
+  "-C", "link-arg=--export=__tls_base",
+  "-C", "link-arg=--import-memory",
+]
+
+[unstable]
+build-std = ["panic_abort", "std"]

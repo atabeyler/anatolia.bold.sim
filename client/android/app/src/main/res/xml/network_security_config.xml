@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "Yerel" mode's local sim-server binds plain HTTP on 127.0.0.1, which
+  Android blocks by default (cleartext traffic disabled since API 28).
+  Scoped to loopback only, mirroring the desktop Tauri shell's own
+  dangerousRemoteDomainIpcAccess allowlist for 127.0.0.1; every other
+  origin still requires HTTPS.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

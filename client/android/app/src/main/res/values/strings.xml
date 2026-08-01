@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Anatolia Sim</string>
+    <string name="title_activity_main">Anatolia Sim</string>
+    <string name="package_name">com.atabeylers.anatoliasim</string>
+    <string name="custom_url_scheme">com.atabeylers.anatoliasim</string>
+</resources>

@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Anatolia Sim</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #030310;
+    color: #e0e0f0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+    position: relative;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50V18L28 2l28 16v32L28 66zM28 100l-28-16V68l28 16 28-16v16L28 100z' fill='none' stroke='%234f6ef7' stroke-width='0.8'/%3E%3C/svg%3E");
+    background-size: 56px 100px;
+  }
+  .glow {
+    position: fixed;
+    border-radius: 999px;
+    pointer-events: none;
+    filter: blur(40px);
+  }
+  .glow.a { width: 380px; height: 380px; top: 12%; left: 15%; background: radial-gradient(circle, rgba(79,110,247,0.10) 0%, transparent 70%); }
+  .glow.b { width: 260px; height: 260px; bottom: 12%; right: 15%; background: radial-gradient(circle, rgba(212,168,56,0.07) 0%, transparent 70%); filter: blur(30px); }
+
+  main {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    max-width: 440px;
+    width: 100%;
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .badge-wrap { position: relative; width: 96px; height: 96px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; animation: warp-in 0.8s cubic-bezier(0.2,0.8,0.4,1) both; }
+  .ring { position: absolute; border-radius: 999px; }
+  .ring.r1 { width: 96px; height: 96px; border: 1px solid rgba(79,110,247,0.35); animation: ring-expand 3s ease-out infinite; }
+  .ring.r2 { width: 96px; height: 96px; border: 1px solid rgba(79,110,247,0.35); animation: ring-expand 3s ease-out 1s infinite; }
+  .ring.r3 { width: 88px; height: 88px; border: 1px dashed rgba(79,110,247,0.3); animation: ring-rotate 14s linear infinite; }
+  .radar { position: absolute; width: 68px; height: 68px; opacity: 0.4; animation: ring-rotate 2.8s linear infinite; }
+  .badge {
+    position: relative; z-index: 2; width: 48px; height: 48px;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, rgba(79,110,247,0.35), rgba(79,110,247,0.08));
+    border: 1.5px solid #6f8bff;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    animation: neon-breathe 3.5s ease-in-out infinite;
+  }
+  .scan-beam {
+    position: fixed; left: 0; right: 0; height: 1px; pointer-events: none;
+    background: linear-gradient(to right, transparent, rgba(204,34,34,0.4), transparent);
+    animation: hud-scan 4s linear infinite;
+  }
+  .boot-in { opacity: 0; animation: boot-in 0.7s ease-out both; }
+
+  h1 {
+    font-family: "Orbitron", -apple-system, sans-serif;
+    font-size: clamp(22px, 5vw, 30px);
+    font-weight: 800;
+    letter-spacing: 0.2em;
+    margin: 0 0 4px 0;
+    color: #00e887;
+    text-shadow: 0 0 20px rgba(0,232,135,0.8), 0 0 40px rgba(0,232,135,0.4);
+  }
+  .kicker {
+    font-family: "Courier New", monospace;
+    font-size: 15px;
+    letter-spacing: 0.4em;
+    color: #4f6ef7;
+    margin: 0 0 16px 0;
+  }
+  .tagline {
+    color: #8898c8;
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 340px;
+    margin: 0 0 22px 0;
+  }
+  .divider { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 300px; margin-bottom: 20px; }
+  .divider .line { flex: 1; height: 1px; background: linear-gradient(to right, transparent, rgba(204,34,34,0.4)); }
+  .divider .line.rev { background: linear-gradient(to left, transparent, rgba(204,34,34,0.4)); }
+  .divider .dot { width: 6px; height: 6px; transform: rotate(45deg); background: rgba(204,34,34,0.6); }
+
+  #gate {
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    color: #8898c8;
+    margin-bottom: 20px;
+    min-height: 1.4em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #gate .dot-live { width: 6px; height: 6px; border-radius: 999px; background: #00d4ff; animation: pulse-live 1.1s ease-in-out infinite; }
+  #gate.error { color: #e05a5a; }
+  #gate.error .dot-live { background: #e05a5a; }
+
+  #retry {
+    display: none;
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    padding: 10px 20px;
+    border: 1px solid rgba(204,34,34,0.5);
+    background: rgba(204,34,34,0.08);
+    color: #e0e0f0;
+    cursor: pointer;
+    margin-bottom: 20px;
+    text-transform: uppercase;
+  }
+  .choices {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+  }
+  button.choice {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    text-align: left;
+    font-size: 15px;
+    padding: 16px 20px;
+    border: 1px solid rgba(58,10,10,0.7);
+    background: rgba(7,7,26,0.6);
+    color: #e0e0f0;
+    cursor: pointer;
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+  button.choice:hover:not(:disabled) {
+    border-color: rgba(204,34,34,0.7);
+    background: rgba(7,7,26,0.9);
+  }
+  button.choice:disabled { opacity: 0.5; cursor: default; }
+  .choice-icon { flex-shrink: 0; width: 22px; height: 22px; }
+  .choice-icon.cloud { color: #00d4ff; }
+  .choice-icon.local { color: #d4a838; }
+  .choice-text { display: flex; flex-direction: column; }
+  .choice-title {
+    font-family: "Orbitron", -apple-system, sans-serif;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-size: 15px;
+  }
+  .choice-desc {
+    display: block;
+    font-size: 12px;
+    color: #8898c8;
+    margin-top: 3px;
+    font-weight: 400;
+    font-family: "Courier New", monospace;
+  }
+  #status {
+    margin-top: 18px;
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+    color: #8898c8;
+    min-height: 1.2em;
+  }
+  #status.error { color: #e05a5a; }
+
+  @keyframes ring-expand { 0% { transform: scale(0.8); opacity: 0.6; } 100% { transform: scale(2.4); opacity: 0; } }
+  @keyframes ring-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @keyframes pulse-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+  @keyframes neon-breathe {
+    0%, 100% { box-shadow: 0 0 0 rgba(79,110,247,0); }
+    50% { box-shadow: 0 0 16px rgba(79,110,247,0.35); }
+  }
+  @keyframes warp-in {
+    0%   { opacity: 0; transform: scale(0.6) rotate(8deg); filter: blur(10px); }
+    60%  { opacity: 1; transform: scale(1.02) rotate(-1deg); filter: blur(0); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  @keyframes boot-in {
+    0%   { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes hud-scan {
+    0%   { top: 0%; opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+  button.choice {
+    transition: border-color 0.2s, background 0.2s, transform 0.2s, box-shadow 0.2s;
+  }
+  button.choice:hover:not(:disabled) { transform: translateY(-2px); }
+  #cloud:hover:not(:disabled) { border-color: rgba(0,212,255,0.7); box-shadow: 0 0 15px rgba(0,212,255,0.35), 0 0 40px rgba(0,212,255,0.15); }
+  #local:hover:not(:disabled) { border-color: rgba(212,168,56,0.7); box-shadow: 0 0 15px rgba(212,168,56,0.35), 0 0 40px rgba(212,168,56,0.15); }
+</style>
+</head>
+<body>
+<div class="glow a"></div>
+<div class="glow b"></div>
+<div class="scan-beam"></div>
+<main>
+  <div class="badge-wrap">
+    <div class="ring r1"></div>
+    <div class="ring r2"></div>
+    <div class="ring r3"></div>
+    <svg class="radar" viewBox="0 0 68 68">
+      <defs>
+        <linearGradient id="sweep" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#4f6ef7" stop-opacity="0" />
+          <stop offset="100%" stop-color="#4f6ef7" stop-opacity="0.8" />
+        </linearGradient>
+      </defs>
+      <path d="M34 34 L34 2 A32 32 0 0 1 64 34 Z" fill="url(#sweep)" />
+    </svg>
+    <div class="badge">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" style="overflow: visible">
+        <circle cx="12" cy="12" r="10" />
+        <ellipse cx="12" cy="12" rx="6" ry="14.29" />
+        <path d="M2 12h20" />
+        <circle cx="12" cy="12" r="1.8" fill="#00e887" stroke="none" />
+      </svg>
+    </div>
+  </div>
+  <h1 id="title">ANATOLIA-SIM</h1>
+  <p class="kicker" id="kicker">CIVILIZATION ENGINE</p>
+  <p class="tagline boot-in" style="animation-delay: 900ms">Two founders. One genome. Watch a civilization emerge from nothing but inheritance and observation.</p>
+  <div class="divider boot-in" style="animation-delay: 1050ms"><div class="line"></div><div class="dot"></div><div class="line rev"></div></div>
+  <div id="gate"><span class="dot-live"></span><span id="gate-text">Checking connection…</span></div>
+  <button id="retry">Retry</button>
+  <div class="choices">
+    <button id="cloud" class="choice">
+      <svg class="choice-icon cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+      <span class="choice-text">
+        <span class="choice-title">Cloud</span>
+        <span class="choice-desc">Synced across every device (web, mobile). Requires internet.</span>
+      </span>
+    </button>
+    <button id="local" class="choice">
+      <svg class="choice-icon local" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M20 15h2M20 9h2M2 15h2M2 9h2"/></svg>
+      <span class="choice-text">
+        <span class="choice-title">Local</span>
+        <span class="choice-desc">Still your cloud account — runs on this device, upload any time to continue elsewhere.</span>
+      </span>
+    </button>
+  </div>
+  <div id="status"></div>
+</main>
+<script>
+  const CLOUD_URL = "https://anatolia-sim.onrender.com";
+  const LOCAL_URL = "http://127.0.0.1:3001";
+  const statusEl = document.getElementById("status");
+  const cloudBtn = document.getElementById("cloud");
+  const localBtn = document.getElementById("local");
+  const gateEl = document.getElementById("gate");
+  const gateTextEl = document.getElementById("gate-text");
+  const retryBtn = document.getElementById("retry");
+  const choicesEl = document.querySelector(".choices");
+
+  // Wordmark/kicker decode from scrambled DNA-base/greek glyphs into their
+  // final text, mirroring LoginPage.tsx's ScrambleText -- purely decorative,
+  // runs once on load regardless of connectivity state.
+  const SCRAMBLE_CHARS = "ATCGATCGatcg0123456789ΔΣΨΩΦΛΞ".split("");
+  function scrambleReveal(el, finalText, delay) {
+    let frame = 0;
+    const randomChar = () => SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
+    el.textContent = finalText.split("").map(c => (c === " " || c === "-" ? c : randomChar())).join("");
+    setTimeout(() => {
+      const iv = setInterval(() => {
+        frame++;
+        el.textContent = finalText.split("").map((c, i) => {
+          if (c === " " || c === "-") return c;
+          return i < frame ? c : randomChar();
+        }).join("");
+        if (frame >= finalText.length) clearInterval(iv);
+      }, 60);
+    }, delay);
+  }
+  scrambleReveal(document.getElementById("title"), "ANATOLIA-SIM", 200);
+  scrambleReveal(document.getElementById("kicker"), "CIVILIZATION ENGINE", 550);
+
+  // Anatolia Sim never runs the "which mode" choice offline: this gate
+  // confirms internet connectivity and lets the user pick up any pending
+  // app update *before* they land in Local or Cloud mode, so both entry
+  // points always start from an up-to-date build.
+  async function checkInternetAndUpdate() {
+    try {
+      // no-cors: this is a pure reachability probe, not a real API call --
+      // we never read the response, only whether fetch() rejected. "cors"
+      // makes the promise reject whenever the response lacks a matching
+      // Access-Control-Allow-Origin header, and this page's own origin here
+      // (Tauri's bundled-asset origin -- https://tauri.localhost on Windows,
+      // tauri://localhost elsewhere) was never in sim-server's CORS
+      // allowlist, so every launch rejected here and got stuck on "Internet
+      // connection required" regardless of actual connectivity. no-cors
+      // still rejects on a genuine network failure (offline, DNS, refused
+      // connection) -- it just stops requiring a CORS-legible response for
+      // a check that was only ever look at success/failure anyway.
+      await fetch(`${CLOUD_URL}/api/health`, { cache: "no-store", mode: "no-cors" });
+    } catch {
+      showOffline();
+      return;
+    }
+
+    try {
+      const { checkUpdate, installUpdate } = window.__TAURI__.updater;
+      const { relaunch } = window.__TAURI__.process;
+      const { shouldUpdate } = await checkUpdate();
+      if (shouldUpdate) {
+        gateTextEl.textContent = "Downloading update…";
+        await installUpdate();
+        await relaunch();
+        return; // app restarts into the new version
+      }
+    } catch (err) {
+      console.warn("[updater] skipped:", err);
+    }
+
+    reveal();
+  }
+
+  function showOffline() {
+    gateTextEl.textContent = "Internet connection required — Anatolia Sim always starts online to check for updates.";
+    gateEl.classList.add("error");
+    retryBtn.style.display = "inline-block";
+  }
+
+  function reveal() {
+    gateEl.style.display = "none";
+    retryBtn.style.display = "none";
+    choicesEl.style.display = "flex";
+    choicesEl.classList.add("boot-in");
+  }
+
+  retryBtn.addEventListener("click", () => {
+    retryBtn.style.display = "none";
+    gateEl.classList.remove("error");
+    gateTextEl.textContent = "Checking connection…";
+    checkInternetAndUpdate();
+  });
+
+  checkInternetAndUpdate();
+
+  cloudBtn.addEventListener("click", () => {
+    window.location.href = CLOUD_URL;
+  });
+
+  localBtn.addEventListener("click", async () => {
+    cloudBtn.disabled = true;
+    localBtn.disabled = true;
+    statusEl.textContent = "Starting local server…";
+    statusEl.classList.remove("error");
+    try {
+      const { invoke } = window.__TAURI__.tauri;
+      await invoke("start_local_server");
+      window.location.href = LOCAL_URL;
+    } catch (err) {
+      statusEl.textContent = "Could not start local server: " + err;
+      statusEl.classList.add("error");
+      cloudBtn.disabled = false;
+      localBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

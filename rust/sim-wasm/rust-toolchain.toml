@@ -1,0 +1,23 @@
+# Pinned (not floating "nightly") per wasm-bindgen-rayon's own README: WASM
+# thread support isn't stabilized, so an unpinned nightly can break this
+# build on any given day for reasons unrelated to this project. Scoped to
+# this directory only -- sim-core/sim-server build on stable elsewhere (see
+# this crate's own Cargo.toml comment on why sim-wasm is a standalone,
+# non-workspace-member crate). Bump deliberately, not automatically.
+#
+# Not the exact nightly-2024-08-02 the wasm-bindgen-rayon README says it was
+# tested with -- that one fails outright on this dependency tree (`getrandom`
+# now requires the `edition2024` Cargo feature, unstable on a ~2024 nightly).
+# This date was simply whatever was current when this was set up and wired
+# through cleanly; there was nothing else special about it.
+#
+# Applying this file's own precedence rules: rustup auto-selects this pinned
+# nightly for *any* cargo/rustc invocation whose working directory is here or
+# below -- including CI's plain `cargo test`/`cargo clippy` steps for this
+# crate (test.yml's wasm-build job), not just the actual wasm32 build. clippy
+# has to be listed here too for that reason, even though only rust-src is
+# needed for the wasm32 -Z build-std step itself.
+[toolchain]
+channel = "nightly-2026-07-18"
+components = ["rust-src", "clippy"]
+targets = ["wasm32-unknown-unknown"]
