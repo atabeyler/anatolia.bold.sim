@@ -16,15 +16,27 @@ jobs:
 
     env:
       RUST_BACKTRACE: 1
-      TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-      TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Sanitize Tauri signing secrets
+        shell: pwsh
+        run: |
+          # A manually-pasted secret (browser copy-paste) can pick up a
+          # trailing or embedded newline the real key value never has --
+          # minisign then rejects the whole key outright ("Invalid symbol
+          # 10" is literally the newline character's ASCII code). Strip
+          # every \r/\n before these ever reach `cargo tauri build`, rather
+          # than relying on the secret having been pasted perfectly.
+          $key = ("${{ secrets.TAURI_PRIVATE_KEY }}" -replace "`r", "" -replace "`n", "").Trim()
+          $pw = ("${{ secrets.TAURI_KEY_PASSWORD }}" -replace "`r", "" -replace "`n", "").Trim()
+          "TAURI_PRIVATE_KEY=$key" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TAURI_KEY_PASSWORD=$pw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TAURI_SIGNING_PRIVATE_KEY=$key" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$pw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - uses: actions/setup-node@v4
         with:
