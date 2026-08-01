@@ -22,6 +22,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Sanitize Android signing secrets
+        shell: bash
+        run: |
+          # Quoting (below, in "Build signed release APK") stops an embedded/
+          # trailing newline in a manually-pasted secret from splitting this
+          # job's shell script in two, but the newline then just becomes part
+          # of the *value* itself -- e.g. the keystore password silently
+          # gaining a trailing "\n" it was never signed with, which keytool
+          # then reports as an outright wrong password. Strip \r/\n here, once,
+          # before either secret is used for anything.
+          {
+            printf 'ANDROID_KEYSTORE_PASSWORD=%s\n' "$(printf '%s' "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | tr -d '\r\n')"
+            printf 'ANDROID_KEY_ALIAS=%s\n' "$(printf '%s' "${{ secrets.ANDROID_KEY_ALIAS }}" | tr -d '\r\n')"
+          } >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -124,20 +139,24 @@ jobs:
         working-directory: client/android
         run: |
           chmod +x gradlew
-          # Every ${{ secrets.* }} value below is quoted, not just the ones with
-          # spaces -- a secret pasted with a trailing/embedded newline (an easy
-          # mistake via a browser's manual copy-paste) otherwise splits this
-          # backslash-continued command in two: bash treats the *unquoted*
-          # substitution's embedded newline as ending the physical line early,
-          # silently dropping every flag after it and running the leftover
-          # text as its own (failing) command.
+          # ANDROID_KEYSTORE_PASSWORD/ANDROID_KEY_ALIAS below come from the
+          # "Sanitize Android signing secrets" step's $GITHUB_ENV -- already
+          # stripped of any \r/\n a manual paste might have introduced -- not
+          # straight from ${{ secrets.* }}. They're still quoted here too, on
+          # general principle: quoting alone stops an embedded newline from
+          # splitting this backslash-continued command in two (bash treats an
+          # *unquoted* substitution's embedded newline as ending the physical
+          # line early), but doesn't stop that newline from silently becoming
+          # part of the value itself -- which is exactly what made keytool
+          # report an outright "wrong password" the first time this ran
+          # through the sanitize step's fix.
           ./gradlew assembleRelease \
             -PversionCode="${{ steps.version.outputs.code }}" \
             -PversionName="${{ steps.version.outputs.version }}" \
             -Pandroid.injected.signing.store.file="$(pwd)/app/release.keystore" \
-            -Pandroid.injected.signing.store.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-            -Pandroid.injected.signing.key.alias="${{ secrets.ANDROID_KEY_ALIAS }}" \
-            -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEYSTORE_PASSWORD"
 
       - name: Remove decoded keystore
         if: always()
