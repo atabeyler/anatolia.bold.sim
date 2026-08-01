@@ -6,14 +6,20 @@ const config: CapacitorConfig = {
   appId: 'com.atabeylers.anatoliasim',
   appName: 'Anatolia Sim',
   webDir: 'dist',
-  // NativeModeGate.tsx's "Cloud" choice does a real window.location.href
-  // navigation to CLOUD_API_URL (anatolia-bold-sim.fly.dev) -- without this
-  // host in allowNavigation, Capacitor's WebViewClient treats it as an
-  // external link and hands it off to the system browser instead of loading
-  // it in-app, which is exactly what "Cloud" is supposed to do here.
-  server: {
-    allowNavigation: ['anatolia-bold-sim.fly.dev'],
-  },
+  // Do NOT add server.allowNavigation here -- this is a known Capacitor
+  // Android bug (ionic-team/capacitor#4164, #5455, #7454): any hostname
+  // listed there breaks the native plugin bridge app-wide on Android (every
+  // custom plugin -- LocalServerPlugin, ApkUpdaterPlugin, FileOpenerPlugin --
+  // starts throwing "plugin is not implemented on android"), not just for
+  // navigation to that host. NativeModeGate.tsx's "Cloud" choice used to
+  // need this (it did a real window.location.href to CLOUD_API_URL, which
+  // Capacitor's WebViewClient hands off to the system browser without an
+  // allowNavigation entry) but no longer navigates at all -- it stays on
+  // this bundled origin and points axios at the cloud API instead, the same
+  // pattern "Local" already used. DashboardPage.tsx's "Devam Et" (resume a
+  // cloud sim from local mode) still does a real cross-origin navigation and
+  // will still fall back to the system browser on Android without this --
+  // an accepted, narrower trade-off against breaking every native plugin.
 };
 
 export default config;
