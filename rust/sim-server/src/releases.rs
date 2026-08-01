@@ -4,15 +4,17 @@
 //! Both `client/src/utils/androidUpdate.ts` and the desktop Tauri updater
 //! (see `desktop/src-tauri/tauri.conf.json`) used to hit `github.com`/
 //! `api.github.com` directly and unauthenticated -- which only works while
-//! `atabeyler/anatolia-sim` stays a *public* repo. Routing both checks
-//! through this server instead means the repo can go private without
-//! breaking in-app update checks: this server (not the end user's device)
-//! holds the one token (`GITHUB_RELEASES_TOKEN`) needed to read a private
-//! repo's releases, and re-serves the same information/bytes it always
-//! served when the repo was public. `GITHUB_RELEASES_TOKEN` is optional --
-//! every function here degrades to the same unauthenticated GitHub request
-//! that worked fine while the repo was public, so this keeps working right
-//! up until the repo actually flips to private.
+//! the repo stays *public*. Routing both checks through this server instead
+//! means the repo can go private without breaking in-app update checks:
+//! this server (not the end user's device) holds the one token
+//! (`GITHUB_RELEASES_TOKEN`) needed to read a private repo's releases, and
+//! re-serves the same information/bytes it always served when the repo was
+//! public. `GITHUB_RELEASES_TOKEN` is optional in theory -- every function
+//! here degrades to the same unauthenticated GitHub request that worked
+//! fine while the repo was public -- but the repo (`atabeyler/anatolia.bold.sim`)
+//! is private now, so it is effectively required: unset or wrong, every
+//! request here 404s (see fetch_latest_release's own comment on why a
+//! private repo's failure mode is specifically a 404).
 use axum::{
     extract::Path,
     http::{header, StatusCode},
@@ -21,7 +23,13 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-const REPO: &str = "atabeyler/anatolia-sim";
+// Repo was recreated under this name (see CLAUDE.md's git-identity notes) --
+// this constant drifting out of sync with the real repo is exactly why
+// in-app update checks (both Android and desktop, see fetch_latest_release
+// below) started failing outright: GitHub 404s a releases/latest request
+// for a repo name that no longer exists, which this module then surfaces
+// as a 502 to the client.
+const REPO: &str = "atabeyler/anatolia.bold.sim";
 
 fn github_token() -> Option<String> {
     std::env::var("GITHUB_RELEASES_TOKEN").ok().filter(|t| !t.trim().is_empty())

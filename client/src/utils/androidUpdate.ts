@@ -14,9 +14,8 @@ import { CLOUD_API_URL } from './cloud';
 //
 // Goes through our own server (releases.rs's android_latest/android_asset)
 // instead of hitting api.github.com directly, like an earlier version of
-// this did -- that only worked because atabeyler/anatolia-sim was a public
-// repo; our server holds the one token needed to keep reading releases once
-// it isn't. It also sidesteps the CORS trap that broke the original direct
+// this did -- that only worked while the repo was public; our server holds
+// the one token needed to keep reading releases now that it's private. It also sidesteps the CORS trap that broke the original direct
 // github.com asset-download URL (redirects to a release-assets.
 // githubusercontent.com URL with no CORS headers, so a WebView fetch()
 // couldn't read the response) -- this server's own /android/asset/:id

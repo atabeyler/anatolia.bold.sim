@@ -127,8 +127,8 @@ Every death not otherwise explained by disease, starvation, disaster, old age, o
 ### Installation
 
 ```bash
-git clone https://github.com/atabeyler/anatolia-sim.git
-cd anatolia-sim
+git clone https://github.com/atabeyler/anatolia.bold.sim.git
+cd anatolia.bold.sim
 
 # Client
 cd client && npm install
