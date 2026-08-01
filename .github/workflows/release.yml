@@ -123,7 +123,7 @@ jobs:
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
                 signature = $signature
-                url       = "https://github.com/atabeyler/anatolia-sim/releases/download/v$version/$($zip.Name)"
+                url       = "https://github.com/atabeyler/anatolia.bold.sim/releases/download/v$version/$($zip.Name)"
               }
             }
           }
