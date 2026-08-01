@@ -71,7 +71,11 @@ jobs:
           key: ${{ runner.os }}-cargo-ndk-v1
 
       - name: Install cargo-ndk
-        run: cargo install cargo-ndk --locked
+        # --force: a cache hit above already restored ~/.cargo/bin/cargo-ndk,
+        # and `cargo install` refuses to overwrite an existing binary without
+        # it ("binary `cargo-ndk` already exists in destination"), failing
+        # this step outright on every cache-hit run.
+        run: cargo install cargo-ndk --locked --force
 
       - uses: nttld/setup-ndk@v1
         id: setup-ndk
