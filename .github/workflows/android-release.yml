@@ -124,13 +124,20 @@ jobs:
         working-directory: client/android
         run: |
           chmod +x gradlew
+          # Every ${{ secrets.* }} value below is quoted, not just the ones with
+          # spaces -- a secret pasted with a trailing/embedded newline (an easy
+          # mistake via a browser's manual copy-paste) otherwise splits this
+          # backslash-continued command in two: bash treats the *unquoted*
+          # substitution's embedded newline as ending the physical line early,
+          # silently dropping every flag after it and running the leftover
+          # text as its own (failing) command.
           ./gradlew assembleRelease \
-            -PversionCode=${{ steps.version.outputs.code }} \
-            -PversionName=${{ steps.version.outputs.version }} \
+            -PversionCode="${{ steps.version.outputs.code }}" \
+            -PversionName="${{ steps.version.outputs.version }}" \
             -Pandroid.injected.signing.store.file="$(pwd)/app/release.keystore" \
-            -Pandroid.injected.signing.store.password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.signing.key.alias=${{ secrets.ANDROID_KEY_ALIAS }} \
-            -Pandroid.injected.signing.key.password=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+            -Pandroid.injected.signing.store.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+            -Pandroid.injected.signing.key.alias="${{ secrets.ANDROID_KEY_ALIAS }}" \
+            -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
 
       - name: Remove decoded keystore
         if: always()
