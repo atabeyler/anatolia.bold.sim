@@ -1,6 +1,6 @@
 [package]
 name = "anatolia-sim-desktop"
-version = "2.5.24"
+version = "2.5.25"
 edition = "2021"
 
 [build-dependencies]
