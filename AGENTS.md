@@ -20,13 +20,7 @@ This rule must never be violated. Before adding any logic that sets a property o
   `https://anatolia-sim.onrender.com`), built via the same root `npm run build` script every other
   build consumer uses. `db.rs`'s Postgres-required guard checks `RENDER_EXTERNAL_URL` (always set
   on a running Render web service) so a deploy missing `DATABASE_URL` fails loudly at startup
-  instead of silently falling back to a throwaway SQLite database. This project briefly deployed on
-  Fly.io instead; that path has been retired back in favor of Render (cost -- Fly's per-second VM
-  billing kept a dedicated-vCPU machine running 24/7 even at minimal load, whereas Render's free
-  web-service plan has no always-on compute charge). `Dockerfile`/`fly.toml` are kept in the repo
-  (unused by Render's own build, which reads `render.yaml` instead) in case that path is needed
-  again -- see `db.rs`'s and `main.rs`'s `FLY_APP_NAME`/`RENDER_EXTERNAL_URL` dual checks, which
-  still recognize either deployment.
+  instead of silently falling back to a throwaway SQLite database.
 
 ## WASM-Local Mode (`client/src/wasmLocal/`)
 
@@ -208,13 +202,18 @@ Distinct from the static, genome-derived phenotype traits (`oxytocin_sensitivity
 receptor sensitivity/predisposition and never change after birth --
 `ind.hormones` models an actual circulating level that rises and falls
 tick by tick, purely as a function of genetics (phenotype/sex/age) and this
-tick's already-tracked real state. `initialize_hormones()` seeds a
-genetics/age baseline once at creation (`create_founder`, `create_child`,
-`migrate_individual_arrival`); `update_hormones()` runs once per living
-individual per tick, in the existing `consciousness_psychology` phase, right
-after `psychology::update_mental_state` (needs this tick's fresh
-`stress_level`) and after the economy phase (needs this tick's fresh
-`satiation`).
+tick's already-tracked real state. `initialize_hormones(individual,
+current_day)` seeds a genetics/age baseline once at creation (`create_founder`,
+`create_child`, `migrate_individual_arrival`), using the individual's *real*
+age at creation day (`get_age(individual, current_day)`) -- not a hardcoded
+newborn age 0 -- so an adult founder or migrant arrival starts with an
+adult-appropriate baseline (LH/FSH/testosterone/estrogen/DHEA/growth hormone
+already at their real age-curve level) instead of an infant/prepubertal one
+that would then take years of in-sim `update_hormones` convergence to catch
+up. `update_hormones()` runs once per living individual per tick, in the
+existing `consciousness_psychology` phase, right after
+`psychology::update_mental_state` (needs this tick's fresh `stress_level`)
+and after the economy phase (needs this tick's fresh `satiation`).
 
 **Forty-nine hormones** (within the ~40-60 range standard endocrinology
 references cite for the full human set), organized as a genuine cascade
@@ -250,9 +249,10 @@ adiponectin_target  = 1 - leptin              npy_target = 1 - leptin
 tsh_target          = (1 - thyroid_prev_tick) * 0.7 + 0.15                (negative feedback)
 thyroid_target      = 0.25 + satiation*0.35 + tsh*0.3 - il6*0.15
 lh_target = fsh_target = puberty(age)         dhea_target = dhea_curve(age)
+  (a cycling female's own lh_target/fsh_target instead follow the ovarian-cycle formula below)
 testosterone_target = base_t(age,sex,dominance,fertility) * (0.7+0.3*lh) * (0.85+0.15*dhea)
-estrogen_target     = base_e(...) * (1.6 if pregnant) * (0.7+0.3*lh) * (0.85+0.15*dhea)
-progesterone_target = 0.85 if pregnant, else (female: 0.1 + fertility*0.1*puberty(age); male: 0.05)
+estrogen_target     = base_e(...) * (1.6 if pregnant) * (0.7+0.3*lh) * (0.85+0.15*dhea) + cycle_estrogen_bump
+progesterone_target = 0.85 if pregnant, else (female: 0.1 + fertility*0.1*puberty(age) + cycle_progesterone_bump; male: 0.05)
 growth_hormone_target = growth_hormone_curve(age)      igf1_target = growth_hormone   osteocalcin_target = growth_hormone
 dopamine_target     = (baseline ± swing from satiation vs. a hungry/well-fed threshold) * (0.9 + 0.1*leptin)
 oxytocin_target     = oxytocin_sensitivity*0.3, +15% of that while in a group
@@ -313,6 +313,60 @@ only the sex-typical one follows the puberty/senescence curve. DHEA is a
 "adrenopause" decline) that modulates both testosterone and estrogen a
 second, independent way from their own sex-specific senescence curve.
 
+**Female ovarian cycle:** a reproductive-age (15–50y), non-pregnant female's
+own LH/FSH/estrogen/progesterone additionally ride a ~28-day cycle, layered
+on top of (never replacing) the puberty/senescence baseline every other
+individual already uses. `cycle_day` (0–27) is tracked in
+`extra["_cycle_day"]` -- the same volatile-state pattern `satiation`/
+`_waterFear` already use -- advancing once per tick only while cycling, and
+resetting to 0 the moment pregnancy begins (real pregnancy suppresses
+cycling entirely; it resumes fresh postpartum).
+
+```
+cycle_phase(cycle_day):                                  (OVULATION_DAY = 13, CYCLE_LENGTH_DAYS = 28)
+  lh_bump           = gaussian(dist_from_ovulation, width=8)  * 0.75   -- sharp surge right at ovulation
+  fsh_bump          = gaussian(dist_from(ovulation-2), width=20) * 0.4 -- earlier, broader follicular-maturation signal
+  estrogen_bump     = gaussian(dist_from_ovulation, width=30) * 0.35   -- follicular rise into the pre-ovulatory peak
+  progesterone_bump = gaussian(luteal_day-7, width=30) * 0.6 if past ovulation, else 0  -- luteal corpus-luteum rise, tapering by cycle end
+```
+A cycling female's own `lh_target` rests at `0.25 + lh_bump` (clamped)
+instead of the flat puberty-complete ceiling every other individual's LH
+sits at, and blends toward it at a fast 0.35/tick during the surge window
+(vs. the default 0.12/tick) -- real LH surges are sharp, ~24-48h events, not
+a slow multi-week drift. FSH/estrogen get the same faster-during-the-bump
+treatment. Non-cycling individuals (males, pre-puberty, post-menopause,
+pregnant) are entirely unaffected -- `cycle_day` simply never advances for
+them.
+
+**Hormones feed back into reproduction, not just stats:** `reproduction.rs`'s
+`hormone_fertility_factor(female, male)` is a bounded (0.3–1.8x) multiplier
+folded directly into `conception_probability`, on top of (never replacing)
+the existing genetic-fertility/age/MHC/inbreeding/demographic-transition
+formula: the female's own LH/estrogen sitting above their cycling resting
+baseline raises odds (conception overwhelmingly happens during the fertile
+window, not uniformly across the cycle); elevated cortisol in *either*
+partner lowers odds (real HPA-axis suppression of the reproductive axis
+under chronic stress); elevated female prolactin lowers odds (real
+lactational-amenorrhea suppression of ovulation); the male's own
+testosterone/DHEA mildly raise odds (real libido/spermatogenesis support).
+`reproduction::update_mating_urge`'s own daily accumulation rate is
+similarly scaled by `0.85 + testosterone*0.2 + estrogen*0.15` (both sexes'
+own circulating levels, sex-typically dominant per `sex_hormone_baselines`),
+and discounted once cortisol exceeds 0.6 or prolactin exceeds 0.4 -- the
+same two real stress/lactation libido-suppression effects, applied to the
+behavioral urge rather than the conception roll itself.
+
+**GH/IGF-1 feeds back into HP recovery:** `update_hormones` also applies a
+small, bounded `health.hp` recovery term (`igf1 * 0.004 * growth_stage_multiplier`,
+capped at `max_hp`) once `satiation >= 0.4` -- real GH/IGF-1 biology is
+tissue growth/repair, not just an age-tracking readout with no downstream
+effect. `growth_stage_multiplier` is 1.0 before adulthood (age < 18) and 0.4
+after, mirroring how much more GH/IGF-1-driven real childhood/adolescent
+growth and recovery is than adult tissue maintenance. `health.hp` isn't
+covered by this module's own cardinal-rule restriction (that only covers
+`individual.hormones` itself), the same way `mortality.rs`/`tick.rs` already
+write to it directly.
+
 **Mating surge:** `apply_mating_surge()` is called directly from `tick.rs`'s
 reproduction phase, at the exact call site (`process_bonding(mother, father,
 "mating")`) mating is already rolled at -- a real, discrete, this-instant
@@ -369,6 +423,16 @@ same cardinal-rule spirit the rest of this module upholds.
 `stats.mean_hormones` (`hormones::compute_population_hormone_stats`, same
 shape/rounding convention as `psychology::compute_population_psych_stats`'s
 `mean_stress`), surfaced in `PsychologyPanel`'s "Hormonal System" section.
+Alongside the flat population-wide average (top-level keys, unchanged),
+`compute_population_hormone_stats` also breaks the same 49-hormone average
+down by sex (`female`/`male`) and age band (`child` <18, `adult` 18-59,
+`elderly` 60+) under `mean_hormones.by_group` -- a flat mean hides real
+physiological differences a hormone system should actually show (children
+carrying near-zero sex hormones vs. adults, elders' declining testosterone/
+estrogen, etc). `PsychologyPanel` renders a row of group-selector chips
+(Overall/Female/Male/Child/Adult/Elderly) above the Hormonal System section;
+selecting one swaps every bar/percentage in that section to read from
+`by_group[selected]` instead of the flat overall average.
 `client_view::serialize_individual` includes the full per-individual
 `hormones` object, rendered as a collapsible per-axis breakdown in
 `PopulationPanel`'s individual detail view (`client/src/utils/hormoneGroups.ts`
@@ -896,7 +960,7 @@ local/SQLite backend only) and its mirror `POST /:id/download-from-cloud`
 between a local device and the cloud account explicitly, one click at a
 time. There is no automatic bidirectional sync -- the local and cloud
 backends are entirely separate databases (see WASM-Local Mode's own db.rs
-note on `FLY_APP_NAME`/`DATABASE_URL`-gated backend selection), so
+note on `DATABASE_URL`-gated backend selection), so
 visibility across them only happens when the player explicitly transfers.
 Both routes reuse `export_simulation`'s/`import_simulation`'s
 round-trippable shape via a shared `insert_simulation_copy` helper
@@ -947,7 +1011,7 @@ kicks in once overhead has eaten most or all of the budget, keeping
 `live_day` advancing in visible steps across a batch instead of by one
 DB-overhead-sized jump. The day counter still can't advance exactly one day
 at a time on a DB-bound backend -- only reducing the DB round-trip latency
-itself (e.g. keeping the Fly machine and its Postgres instance in the same
+itself (e.g. keeping the web service and its Postgres instance in the same
 region) shrinks how much of a batch a client actually sees paced smoothly
 versus frozen through the real DB call.
 
@@ -1063,15 +1127,11 @@ All development directly on `main` → push → Render auto-deploys (`render.yam
 `autoDeployTrigger: commit` rebuilds the `anatolia-sim` web service on every push to `main`).
 
 **`render.yaml`'s `buildFilter.ignoredPaths`** (root markdown docs, `desktop/**`,
-`client/android/**`, `.github/**`, plus `Dockerfile`/`.dockerignore`/`fly.toml`) skips a rebuild for
-pushes that touch only those paths -- none of which the root `build` script (`npm run build`:
-`build:wasm` + `client/` + `cargo build -p sim-server`) reads -- for a byte-identical binary. This
-matters concretely on Render's free tier: it exhausted its monthly build quota on 2026-07-28 after a
-run of doc-only commits with no such filter in place, which is why this filter exists and must not
-be dropped from `render.yaml`. (This project briefly deployed on Fly.io, whose GitHub-integration
-launch flow has no equivalent per-path filter -- every push, including doc-only ones, triggered a
-full rebuild there. `Dockerfile`/`fly.toml` are kept in the repo, unused by Render's own build, in
-case that path is used again.)
+`client/android/**`, `.github/**`) skips a rebuild for pushes that touch only those paths -- none of
+which the root `build` script (`npm run build`: `build:wasm` + `client/` + `cargo build -p
+sim-server`) reads -- for a byte-identical binary. This matters concretely on Render's free tier: it
+exhausted its monthly build quota on 2026-07-28 after a run of doc-only commits with no such filter
+in place, which is why this filter exists and must not be dropped from `render.yaml`.
 
 ## Versioning (desktop + Android release)
 
@@ -1131,8 +1191,8 @@ the live web deploy outright: a build environment with no Rust
 the build command runs `wasm-pack` first -- it just runs the root
 `npm run build` script verbatim. GitHub Actions doesn't have this problem
 since a workflow step can install `wasm-pack` first, but a plain
-`npm run build` invocation (Render's own `buildCommand`, and the Fly.io
-Dockerfile's `RUN npm run build` alike) does. If sim-wasm actually needs
+`npm run build` invocation (Render's own `buildCommand`) does. If sim-wasm
+actually needs
 wiring into the client in the future, either (a) build sim-wasm inside the
 root `npm run build` script itself so every consumer of that script (Render's
 `buildCommand` included) picks it up, or (b) make the client import

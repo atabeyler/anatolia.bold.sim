@@ -1,4 +1,4 @@
-use sim_core::{advance_one_day, create_founder, create_world_state, is_on_land, SimulationState, WorldState};
+use sim_core::{advance_one_day, create_founder, create_world_state, derive_stats, is_on_land, population_view, SimulationState, WorldState};
 use std::collections::HashSet;
 
 fn two_founders_state() -> SimulationState {
@@ -170,4 +170,30 @@ fn nobody_ever_drifts_off_the_land_mask() {
             );
         }
     }
+}
+
+/// End-to-end regression for the Population panel bug where the deceased
+/// list showed real entries next to a "0" death count: run a real
+/// simulation long enough for real deaths to occur (old age, mortality
+/// risk, etc. -- not a hand-built individual list), then verify
+/// `derive_stats`'s own `deaths` figure always matches how many individuals
+/// `population_view(alive=false)` actually lists as deceased.
+#[test]
+fn derive_stats_death_count_always_matches_the_deceased_population_view() {
+    let mut state = two_founders_state();
+    let mut saw_a_real_death = false;
+    for _ in 0..(20 * 365) {
+        advance_one_day(&mut state);
+        let stats = derive_stats(&state);
+        let reported_deaths = stats.get("deaths").and_then(|v| v.as_i64()).unwrap_or(-1);
+        let deceased_listed = population_view(&state, Some(false), None).len() as i64;
+        assert_eq!(
+            reported_deaths, deceased_listed,
+            "stats.deaths ({reported_deaths}) must always match the Population panel's own deceased list length ({deceased_listed})"
+        );
+        if reported_deaths > 0 {
+            saw_a_real_death = true;
+        }
+    }
+    assert!(saw_a_real_death, "20 simulated years should include at least one real death to actually exercise this check");
 }

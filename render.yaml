@@ -33,13 +33,6 @@ services:
         - "desktop/**"
         - "client/android/**"
         - ".github/**"
-        # Fly.io deployment config -- irrelevant to Render's own build,
-        # which never reads any of these. Kept in the repo alongside this
-        # blueprint (not deleted) so switching back is a config change, not
-        # a from-scratch rebuild, if that's ever needed again.
-        - "Dockerfile"
-        - ".dockerignore"
-        - "fly.toml"
     envVars:
       - key: NODE_ENV
         value: production

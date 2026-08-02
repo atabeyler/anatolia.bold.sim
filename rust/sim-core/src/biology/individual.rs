@@ -157,7 +157,9 @@ pub fn create_founder(params: &Value) -> Individual {
     // blends around, before any methylation has had a chance to run --
     // see epigenetics::snapshot_genetic_baseline.
     crate::epigenetics::snapshot_genetic_baseline(&mut individual);
-    crate::hormones::initialize_hormones(&mut individual);
+    // Founders are created "now" (simulation day 0); birth_day is already
+    // backdated by age_years above, so day 0 yields their real configured age.
+    crate::hormones::initialize_hormones(&mut individual, 0);
     individual
 }
 
@@ -299,7 +301,7 @@ pub fn create_child(parent1: &Individual, parent2: &Individual, birth_day: i32, 
         extra,
     };
     crate::epigenetics::snapshot_genetic_baseline(&mut individual);
-    crate::hormones::initialize_hormones(&mut individual);
+    crate::hormones::initialize_hormones(&mut individual, birth_day);
     individual
 }
 
@@ -362,7 +364,7 @@ pub fn migrate_individual_arrival(source: &Individual, source_current_day: i32, 
     // simulation's per-tick circulating levels (mid-stress-response,
     // mid-pregnancy-surge, whatever they happened to be) don't mean anything
     // in a simulation this individual never lived a single tick in.
-    crate::hormones::initialize_hormones(&mut individual);
+    crate::hormones::initialize_hormones(&mut individual, target_current_day);
     individual
 }
 

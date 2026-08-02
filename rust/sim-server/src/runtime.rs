@@ -164,7 +164,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// raises the per-day delay above what the natural share would give.
 ///
 /// This still can't make the counter advance *exactly* one day at a time --
-/// only reducing DB round-trip latency itself (e.g. keeping the Fly machine
+/// only reducing DB round-trip latency itself (e.g. keeping the web service
 /// and its Postgres instance in the same region) shrinks how much of a
 /// batch's total time is DB overhead the counter must sit frozen through
 /// versus how much is this function's own paced, visibly-counting span.
