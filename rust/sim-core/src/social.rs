@@ -429,6 +429,7 @@ pub fn process_intergroup_conflict(population: &mut [Individual], groups: &mut [
                 events.push(json!({
                     "type": "death",
                     "individual_id": ind.id,
+                    "name": crate::client_view::individual_display_name(ind),
                     "cause": "conflict",
                     "day": sim_day,
                     "importance": "medium",

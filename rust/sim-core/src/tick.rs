@@ -20,7 +20,8 @@ use serde_json::{json, Value};
 use web_time::Instant;
 
 use crate::{
-    agent, architecture, art, astronomy, belief, biology, client_view::pascal_to_snake,
+    agent, architecture, art, astronomy, belief, biology,
+    client_view::{individual_display_name, pascal_to_snake},
     consciousness, culture, economy, environment, epigenetics, hormones, language, law,
     microbiome, milestones, psychology, social, spatial::SpatialGrid, technology, PhaseTimings,
     SimulationState, TickReport,
@@ -1115,7 +1116,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                 child.is_dead = true;
                 child.death_day = Some(current_day);
                 child.extra.insert("death_cause".to_string(), json!("birth_complications"));
-                events.push(json!({ "type": "death", "individual_id": child.id, "cause": "birth_complications", "day": current_day, "importance": "medium" }));
+                events.push(json!({ "type": "death", "individual_id": child.id, "name": individual_display_name(&child), "cause": "birth_complications", "day": current_day, "importance": "medium" }));
             }
 
             // Twins/triplets: each additional sibling is its own independent
@@ -1154,7 +1155,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                         twin.is_dead = true;
                         twin.death_day = Some(current_day);
                         twin.extra.insert("death_cause".to_string(), json!("birth_complications"));
-                        events.push(json!({ "type": "death", "individual_id": twin.id, "cause": "birth_complications", "day": current_day, "importance": "medium" }));
+                        events.push(json!({ "type": "death", "individual_id": twin.id, "name": individual_display_name(&twin), "cause": "birth_complications", "day": current_day, "importance": "medium" }));
                     }
                     siblings.push(twin);
                     if rand::random::<f64>() < twin_chance * 0.1 {
@@ -1172,7 +1173,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                             triplet.is_dead = true;
                             triplet.death_day = Some(current_day);
                             triplet.extra.insert("death_cause".to_string(), json!("birth_complications"));
-                            events.push(json!({ "type": "death", "individual_id": triplet.id, "cause": "birth_complications", "day": current_day, "importance": "medium" }));
+                            events.push(json!({ "type": "death", "individual_id": triplet.id, "name": individual_display_name(&triplet), "cause": "birth_complications", "day": current_day, "importance": "medium" }));
                         }
                         siblings.push(triplet);
                     }
@@ -1187,7 +1188,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                     mother.is_dead = true;
                     mother.death_day = Some(current_day);
                     mother.extra.insert("death_cause".to_string(), json!("birth_complications"));
-                    events.push(json!({ "type": "death", "individual_id": mother.id, "cause": "birth_complications", "day": current_day, "importance": "high", "is_founder": mother.is_founder }));
+                    events.push(json!({ "type": "death", "individual_id": mother.id, "name": individual_display_name(mother), "cause": "birth_complications", "day": current_day, "importance": "high", "is_founder": mother.is_founder }));
                 }
             }
 
@@ -1296,7 +1297,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                 // silently fell back to showing the raw English enum name.
                 let cause_str = pascal_to_snake(&format!("{cause:?}"));
                 individual.extra.insert("death_cause".to_string(), json!(cause_str));
-                events.push(json!({ "type": "death", "individual_id": individual.id, "cause": cause_str, "day": current_day, "importance": "medium", "is_founder": individual.is_founder }));
+                events.push(json!({ "type": "death", "individual_id": individual.id, "name": individual_display_name(individual), "cause": cause_str, "day": current_day, "importance": "medium", "is_founder": individual.is_founder }));
             }
         }
     }

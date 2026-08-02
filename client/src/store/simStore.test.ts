@@ -49,6 +49,30 @@ describe('addEvent()', () => {
     // en son eklenen olay listenin başında olmalı
     expect(useSimStore.getState().events[0].id).toBe('e249');
   });
+
+  // Regression: a large tick batch at high sim speed can push more than 200
+  // unrelated events (births, thoughts, discoveries, ...) alongside a few
+  // death events in the same WS delivery -- a flat 200-cap shared across all
+  // event types used to silently evict an earlier death from that very
+  // batch before the Events panel's "Ölüm"/Death filter ever saw it.
+  it('yoğun olay akışında ölüm olaylarını atmadan korur', () => {
+    useSimStore.getState().addEvent(baseEvent({ id: 'death-1', event_type: 'death' }));
+    for (let i = 0; i < 250; i++) {
+      useSimStore.getState().addEvent(baseEvent({ id: `birth-${i}`, event_type: 'birth' }));
+    }
+    const events = useSimStore.getState().events;
+    expect(events.some(e => e.id === 'death-1')).toBe(true);
+    expect(events.filter(e => e.event_type === 'birth')).toHaveLength(200);
+  });
+
+  it('ölüm olayları kendi ayrı, daha büyük bir üst sınıra sahiptir', () => {
+    for (let i = 0; i < 350; i++) {
+      useSimStore.getState().addEvent(baseEvent({ id: `death-${i}`, event_type: 'death' }));
+    }
+    const deaths = useSimStore.getState().events.filter(e => e.event_type === 'death');
+    expect(deaths).toHaveLength(300);
+    expect(deaths[0].id).toBe('death-349');
+  });
 });
 
 // ── setEvents() dedup ────────────────────────────────────────────────────────
