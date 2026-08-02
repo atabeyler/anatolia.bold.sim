@@ -7,6 +7,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { text, describeBeliefCode, beliefCodeNumber, CAUSE_LABELS, translateSeason, translateWeather, translateDrive, translateMigrationReason, translateTech, translateArtForm, translateEventType, translateEventDescription, translateRole, translateMentalState, UNNAMED_LABEL, type LangCode } from '../../utils/i18n';
 import { saveFile, shareFile, openFile, type SavedFile } from '../../utils/fileExport';
+import { HORMONE_GROUPS } from '../../utils/hormoneGroups';
 
 // downloadPDF()'s offscreen render container -- shared style so every chunk
 // (cover, section, individuals-batch) looks identical to how the old
@@ -444,9 +445,9 @@ ${secColor(rt('Hormonal Sistem (Nüfus Ort.)','Hormonal System (Pop. Avg.)'), '#
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
   ${(() => {
     const H = (S.mean_hormones ?? {}) as Record<string, number>;
-    // A representative subset, one per axis (see AGENTS.md's Hormones
-    // section) -- the full 49-hormone breakdown is in PsychologyPanel/
-    // PopulationPanel in the live app; a printed report stays a summary.
+    // A quick-glance subset up top, one per axis -- the full 49-hormone
+    // breakdown (population overall + by sex/age group) follows right
+    // below as a table, mirroring PsychologyPanel's own breakdown chips.
     return [
       [rt('Kortizol','Cortisol'), H.cortisol, '#ef4444'],
       [rt('Adrenalin','Adrenaline'), H.adrenaline, '#f97316'],
@@ -459,6 +460,27 @@ ${secColor(rt('Hormonal Sistem (Nüfus Ort.)','Hormonal System (Pop. Avg.)'), '#
     ].map(([label, value, color]) => statCard(label as string, pct(value as number), color as string)).join('');
   })()}
 </div>
+${(() => {
+  const meanHormones = (S.mean_hormones ?? {}) as Record<string, unknown>;
+  const overall = meanHormones as Record<string, number>;
+  const byGroup = (meanHormones.by_group ?? {}) as Record<string, Record<string, number>>;
+  const groupKeys = ['female', 'male', 'child', 'adult', 'elderly'] as const;
+  const groupLabels: Record<(typeof groupKeys)[number], string> = {
+    female: rt('Kadın', 'Female'),
+    male: rt('Erkek', 'Male'),
+    child: rt('Çocuk', 'Child'),
+    adult: rt('Yetişkin', 'Adult'),
+    elderly: rt('Yaşlı', 'Elderly'),
+  };
+  const allRows = HORMONE_GROUPS.flatMap(group =>
+    group.items.map(item => [text(lang as LangCode, group.title), text(lang as LangCode, item.label), pct(overall[item.key]), ...groupKeys.map(g => pct(byGroup[g]?.[item.key]))])
+  );
+  return styledTbl(
+    [rt('Eksen', 'Axis'), rt('Hormon', 'Hormone'), rt('Genel', 'Overall'), ...groupKeys.map(g => groupLabels[g])],
+    allRows.map((cells, i) => stRow(cells, i)).join(''),
+    '#ec4899'
+  );
+})()}
 ${styledTbl(
   [rt('Gösterge','Metric'), rt('Değer','Value'), rt('Gösterge','Metric'), rt('Değer','Value')],
   (() => {
