@@ -1164,8 +1164,15 @@ async fn get_report(State(state): State<AppState>, Path(id): Path<String>, heade
             })
         })
         .collect();
-    let death_total = individuals.iter().filter(|i| i.get("is_dead").and_then(|v| v.as_bool()).unwrap_or(false)).count() as i64;
-    let dead_individuals: Vec<&Value> = individuals.iter().filter(|i| i.get("is_dead").and_then(Value::as_bool).unwrap_or(false)).collect();
+    // Matches derive_stats'/population_view's own broader dead-filter
+    // (`!alive || is_dead`) rather than `is_dead` alone -- see their shared
+    // doc comment for why (an older checkpoint/partial-upsert payload
+    // missing just `is_dead` would otherwise be invisible here).
+    let is_dead_predicate = |i: &&Value| {
+        i.get("is_dead").and_then(Value::as_bool).unwrap_or(false) || !i.get("alive").and_then(Value::as_bool).unwrap_or(true)
+    };
+    let death_total = individuals.iter().filter(is_dead_predicate).count() as i64;
+    let dead_individuals: Vec<&Value> = individuals.iter().filter(is_dead_predicate).collect();
     let mut death_by_cause: serde_json::Map<String, Value> = serde_json::Map::new();
     for i in &dead_individuals {
         if let Some(cause) = i.get("death_cause").and_then(Value::as_str) {
@@ -4246,6 +4253,37 @@ mod tests {
 
         let genealogy = load_genealogy_index(&backend, &sim_id, None).await.expect("genealogy");
         assert!(genealogy.contains_key(&founder_id), "the long-dead founder must still resolve in the genealogy index");
+    }
+
+    #[tokio::test]
+    async fn bounded_tick_state_still_reports_the_true_total_death_count_for_a_long_dead_individual() {
+        // Regression test for the actual production bug: ws.rs's periodic
+        // tick broadcast sources `stats` from load_bounded_tick_state_no_genealogy,
+        // which drops long-dead individuals from `state.individuals` (see the
+        // test above). derive_stats used to count deaths by filtering that
+        // same (bounded) individuals array, so once a death aged past the
+        // grace window the live stats HUD's death counter silently dropped
+        // back toward zero -- even though the Population panel's own
+        // deceased list (an unbounded DB query) kept showing every death.
+        // total_ever_died must stay correct here regardless.
+        let state = test_state().await;
+        let backend = state.backend.clone();
+        let app = test_app(state);
+        let sim_id = create_simulation(&app).await;
+
+        let mut sim = load_full_state(&backend, &sim_id).await.expect("load").expect("state");
+        sim.individuals[0].alive = false;
+        sim.individuals[0].is_dead = true;
+        sim.individuals[0].death_day = Some(sim.current_day);
+        upsert_individuals(&backend, &sim, true).await.expect("upsert dead founder");
+
+        sim.current_day += sim_core::DEAD_FIELD_STRIP_GRACE_DAYS + 10;
+        save_existing_state(&backend, &sim).await.expect("save advanced day");
+
+        let bounded = load_bounded_tick_state_no_genealogy(&backend, &sim_id).await.expect("load").expect("state");
+        assert_eq!(bounded.individuals.len(), 1, "the long-dead founder should have already dropped out of the bounded set");
+        let stats = sim_core::derive_stats(&bounded);
+        assert_eq!(stats.get("deaths").and_then(Value::as_i64), Some(1), "deaths must still count the long-dead founder even once they've dropped out of the bounded individuals set");
     }
 
     #[tokio::test]

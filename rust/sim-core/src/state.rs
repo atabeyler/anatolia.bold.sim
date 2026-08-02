@@ -219,6 +219,22 @@ pub struct SimulationState {
     /// `speed_multiplier`), then incremented in-memory on every birth.
     #[serde(default)]
     pub total_ever_born: i32,
+    /// Total individuals ever died -- the same "dedicated, monotonic
+    /// counter" fix as `total_ever_born` above, for the exact same reason:
+    /// `derive_stats`'s own `deaths` field used to be
+    /// `individuals.iter().filter(is_dead).count()`, which silently
+    /// undercounted (often down to near-zero on a long-running simulation)
+    /// once ws.rs's periodic tick broadcast started sourcing it from
+    /// `load_bounded_tick_state_no_genealogy` (db.rs), which deliberately
+    /// excludes anyone dead more than `DEAD_FIELD_STRIP_GRACE_DAYS` ago from
+    /// the in-memory `individuals` set entirely -- the Population panel's
+    /// own deceased list (an unbounded DB query) kept showing every death
+    /// while the live stats HUD's death counter kept dropping back toward
+    /// zero as deaths aged out of the bounded window. Sourced from the DB's
+    /// dedicated `death_count` column on load, then incremented in-memory
+    /// on every death.
+    #[serde(default)]
+    pub total_ever_died: i32,
     /// Everyone-ever-born's parent ids + inbreeding coefficient, always kept
     /// fully populated regardless of how `individuals` itself is bounded --
     /// see `biology::genome::GenealogyIndex`. Deliberately not persisted in

@@ -1728,6 +1728,15 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
         }
     }
 
+    // Every death-producing path in this tick (mortality/birth-complications
+    // above, plus disaster/infection/conflict merged in via events.extend
+    // earlier) pushes a "death" event -- counted here into the same
+    // dedicated, monotonic `total_ever_born`-style counter (see its own doc
+    // comment on state.rs) rather than ever re-deriving a death total by
+    // counting `individuals`, which is bounded (alive+recently-dead only)
+    // on several read paths and would silently undercount.
+    state.total_ever_died += events.iter().filter(|e| e.get("type").and_then(Value::as_str) == Some("death")).count() as i32;
+
     if !events.is_empty() {
         state.events.extend(events);
         let len = state.events.len();
