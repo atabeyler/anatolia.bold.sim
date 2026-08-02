@@ -4,6 +4,19 @@ on:
   push:
     branches:
       - main
+    # Mirrors render.yaml's own buildFilter.ignoredPaths reasoning -- none
+    # of these paths are ever read by this workflow's own build (npm run
+    # build's build:wasm + client + cargo build -p sim-server, then cargo
+    # tauri build in desktop/src-tauri), so a push touching only these
+    # doesn't need the full ~11-minute Windows build. Deliberately doesn't
+    # include desktop/** (this workflow's own source) or this workflow file
+    # itself.
+    paths-ignore:
+      - '**.md'
+      - 'client/android/**'
+      - '.github/workflows/android-release.yml'
+      - '.github/workflows/test.yml'
+      - '.github/ISSUE_TEMPLATE/**'
   workflow_dispatch:
 
 jobs:
@@ -43,6 +56,22 @@ jobs:
           node-version: '24'
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
+
+      # actions/checkout resets every file's mtime to checkout time, even
+      # for byte-identical content -- Cargo's own fingerprint check is
+      # partially mtime-based, so a fresh checkout can look "newer" than a
+      # perfectly-restored target/ cache and trigger an unnecessary
+      # recompile of unchanged crates (confirmed: sim-core/sim-server
+      # recompiling from scratch, ~3 minutes, despite Swatinem/rust-cache's
+      # own restore reporting a full match with no source changes since the
+      # cache was saved). This restores each tracked file's mtime to its
+      # last commit's timestamp -- always older than whenever a prior run's
+      # cargo build actually produced the cached artifacts -- so that check
+      # comes out correctly negative. Best-effort: any failure here just
+      # forgoes the speedup, never breaks the build (see the script's own
+      # top-level try/catch).
+      - name: Restore file mtimes from git history
+        run: node scripts/restore-git-mtimes.mjs
 
       - uses: dtolnay/rust-toolchain@stable
         with:
