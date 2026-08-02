@@ -8,7 +8,7 @@ import { useSimStore } from '../store/simStore';
 import SimCreationWizard from '../components/SimCreationWizard';
 import SimMenuOverlay from '../components/layout/SimMenuOverlay';
 import SettingsButton from '../components/layout/SettingsButton';
-import { CLOUD_API_URL, isLocalOrigin } from '../utils/cloud';
+import { CLOUD_API_URL, cloudUrl, isLocalOrigin } from '../utils/cloud';
 import { isWasmLocalModeActive } from '../wasmLocal/mode';
 
 const LOCALE_MAP: Record<string, string> = { tr: 'tr-TR', en: 'en-US', de: 'de-DE', fr: 'fr-FR', ar: 'ar-SA' };
@@ -216,7 +216,7 @@ export default function DashboardPage() {
     setCleaning(true);
     setCleanMsg(null);
     try {
-      const { data } = await axios.post('/api/admin/cleanup', {}, { headers });
+      const { data } = await axios.post(cloudUrl('/api/admin/cleanup'), {}, { headers });
       const total = (data.checkpoints_deleted ?? 0) + (data.events_deleted ?? 0) + (data.dead_individuals_deleted ?? 0);
       setCleanMsg({ ok: true, text: `✓ ${total} ${text(lang as LangCode, { tr: 'kayıt silindi', en: 'records deleted', de: 'Einträge gelöscht', fr: 'entrées supprimées', ar: 'سجلات محذوفة' })}` });
     } catch {
