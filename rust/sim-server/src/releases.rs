@@ -220,10 +220,10 @@ mod tests {
                 },
             },
         });
-        let rewritten = rewrite_desktop_manifest(manifest, "https://anatolia-bold-sim.fly.dev", 111);
+        let rewritten = rewrite_desktop_manifest(manifest, "https://anatolia-sim.onrender.com", 111);
         assert_eq!(
             rewritten.pointer("/platforms/windows-x86_64/url").and_then(Value::as_str),
-            Some("https://anatolia-bold-sim.fly.dev/api/updates/desktop/asset/111")
+            Some("https://anatolia-sim.onrender.com/api/updates/desktop/asset/111")
         );
         // The signature (and everything else Tauri's updater plugin
         // verifies against) must survive untouched -- only the url changes.

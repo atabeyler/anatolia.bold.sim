@@ -87,13 +87,17 @@ This rule must never be violated. Before adding any logic that sets a property o
 - Simulation: `rust/sim-core` + `rust/sim-server` — runtime loop and DB-backed tick orchestration
 - Client: `client/src/` — Vite + Tailwind, panels in `components/panels/`
 - Desktop: Tauri shell that launches the Rust server locally
-- Deploy: Fly.io (`Dockerfile` + `fly.toml`, app `anatolia-bold-sim`, production URL
-  `https://anatolia-bold-sim.fly.dev`), built via the same root `npm run build` script every other
-  build consumer uses. `db.rs`'s Postgres-required guard checks `FLY_APP_NAME` (always set on a
-  running Fly.io machine) so a deploy missing `DATABASE_URL` fails loudly at startup instead of
-  silently falling back to a throwaway SQLite database. This project previously deployed on
-  Render.com; that path has been fully retired (no `render.yaml`, no Render-specific code paths
-  remain) in favor of Fly.io.
+- Deploy: Render (`render.yaml` blueprint, service `anatolia-sim`, production URL
+  `https://anatolia-sim.onrender.com`), built via the same root `npm run build` script every other
+  build consumer uses. `db.rs`'s Postgres-required guard checks `RENDER_EXTERNAL_URL` (always set
+  on a running Render web service) so a deploy missing `DATABASE_URL` fails loudly at startup
+  instead of silently falling back to a throwaway SQLite database. This project briefly deployed on
+  Fly.io instead; that path has been retired back in favor of Render (cost -- Fly's per-second VM
+  billing kept a dedicated-vCPU machine running 24/7 even at minimal load, whereas Render's free
+  web-service plan has no always-on compute charge). `Dockerfile`/`fly.toml` are kept in the repo
+  (unused by Render's own build, which reads `render.yaml` instead) in case that path is needed
+  again -- see `db.rs`'s and `main.rs`'s `FLY_APP_NAME`/`RENDER_EXTERNAL_URL` dual checks, which
+  still recognize either deployment.
 
 ## WASM-Local Mode (`client/src/wasmLocal/`)
 
@@ -146,7 +150,7 @@ build share one implementation instead of two that could drift apart.
 
 CI (`wasm-build` job in `.github/workflows/test.yml`) builds and
 native-tests `rust/sim-wasm` on every push/PR so it can't silently bit-rot;
-`npm run build` (used by Fly.io, Desktop, and Android release builds alike)
+`npm run build` (used by Render, Desktop, and Android release builds alike)
 runs `build:wasm` first for the same reason — `worker.ts` statically imports
 the generated package, so any client build breaks outright without it.
 
@@ -935,19 +939,19 @@ engineer would write them.
 
 ## Branch Strategy
 
-All development directly on `main` → push → Fly.io auto-deploys (the GitHub-connected app rebuilds
-via the `Dockerfile` on every push to `main`).
+All development directly on `main` → push → Render auto-deploys (`render.yaml`'s
+`autoDeployTrigger: commit` rebuilds the `anatolia-sim` web service on every push to `main`).
 
-**No doc-only-push build filter currently exists for Fly.io.** Render's `render.yaml` used to
-declare a `buildFilter.ignoredPaths` list (root markdown docs, `desktop/**`, `client/android/**`,
-`.github/**`) so a push touching only those paths -- none of which the root `build` script
-(`npm run build`: `build:wasm` + `client/` + `cargo build -p sim-server`) reads -- skipped a full
-wasm+client+release-Rust rebuild for a byte-identical binary. Fly.io's GitHub-integration launch
-flow has no equivalent per-path filter, so **every** push to `main`, including doc-only commits,
-currently triggers a full Fly.io rebuild. This was a real, previously-hit cost problem on Render's
-free tier (exhausted its monthly build quota on 2026-07-28 after a run of doc-only commits) -- keep
-this in mind before batching a lot of doc-only commits on Fly.io too, and revisit if Fly.io ever
-exposes a similar path-based build filter.
+**`render.yaml`'s `buildFilter.ignoredPaths`** (root markdown docs, `desktop/**`,
+`client/android/**`, `.github/**`, plus `Dockerfile`/`.dockerignore`/`fly.toml`) skips a rebuild for
+pushes that touch only those paths -- none of which the root `build` script (`npm run build`:
+`build:wasm` + `client/` + `cargo build -p sim-server`) reads -- for a byte-identical binary. This
+matters concretely on Render's free tier: it exhausted its monthly build quota on 2026-07-28 after a
+run of doc-only commits with no such filter in place, which is why this filter exists and must not
+be dropped from `render.yaml`. (This project briefly deployed on Fly.io, whose GitHub-integration
+launch flow has no equivalent per-path filter -- every push, including doc-only ones, triggered a
+full rebuild there. `Dockerfile`/`fly.toml` are kept in the repo, unused by Render's own build, in
+case that path is used again.)
 
 ## Versioning (desktop + Android release)
 
@@ -964,8 +968,8 @@ for a deliberately bigger jump) — run this **before** pushing, as part of
 the same commit/push that merges the change in, not as a separate follow-up
 commit. Do it as part of the merge, not in a separate CI step or a second
 push: a second push to `main` (e.g. CI committing a version bump back)
-would trigger a second, redundant Fly.io deploy (~6-7 min) for no code
-change. One push, code + version bump together, one deploy.
+would trigger a second, redundant Render deploy for no code change. One
+push, code + version bump together, one deploy.
 
 This applies to both the desktop app and the Android app: `Desktop Release`
 (`.github/workflows/release.yml`) and `Android Release`
@@ -977,7 +981,7 @@ version bump before pushing covers both releases in one shot.
 touches docs (`CLAUDE.md`, `AGENTS.md`, `README.md`, comments-only diffs,
 etc.) with no change to app code, build config, or dependencies does not
 need a version bump — bumping for those would just tag/ship an installer
-identical to the last one and trigger a redundant Fly.io deploy for
+identical to the last one and trigger a redundant Render deploy for
 nothing. Bump the version on the next commit that actually changes app
 code.
 
@@ -1009,19 +1013,17 @@ Android actually uses today.
 fixing every build environment that runs `npm ci`/`npm run build` there** --
 that was tried once (a `file:../rust/sim-wasm/pkg` dependency plus a
 `client/src/engine/wasmEngine.ts` bridge, both since removed), and it broke
-the live web deploy outright (on Render at the time; the Dockerfile-based
-Fly.io build today runs the exact same root `npm run build` script and would
-hit the identical failure mode): a build environment with no Rust
+the live web deploy outright: a build environment with no Rust
 `wasm32-unknown-unknown` target or `wasm-pack` preinstalled can't resolve a
 `file:` dependency whose target directory doesn't exist yet, and nothing in
 the build command runs `wasm-pack` first -- it just runs the root
 `npm run build` script verbatim. GitHub Actions doesn't have this problem
 since a workflow step can install `wasm-pack` first, but a plain
-`npm run build` invocation (Render's old build command, and the Fly.io
-Dockerfile's `RUN npm run build` today) does. If sim-wasm actually needs
+`npm run build` invocation (Render's own `buildCommand`, and the Fly.io
+Dockerfile's `RUN npm run build` alike) does. If sim-wasm actually needs
 wiring into the client in the future, either (a) build sim-wasm inside the
-root `npm run build` script itself so every consumer of that script (the
-Fly.io Dockerfile included) picks it up, or (b) make the client import
+root `npm run build` script itself so every consumer of that script (Render's
+`buildCommand` included) picks it up, or (b) make the client import
 lazy/optional so a missing package doesn't fail `tsc`/the build.
 
 In-app update check (there's no store to do this for us): `client/src/
@@ -1050,7 +1052,7 @@ requires them to match). None of these are in the repo; they must be added
 under Settings → Secrets and variables → Actions before the workflow can
 produce a signed APK.
 
-**`GITHUB_RELEASES_TOKEN` (Fly.io secret, optional but required once this
+**`GITHUB_RELEASES_TOKEN` (Render secret, optional but required once this
 repo goes private):** a GitHub token with read access to this repo's
 releases/contents, used only by `releases.rs` to read release metadata and
 download assets server-side on behalf of the Android/desktop update
@@ -1083,27 +1085,27 @@ Base64 of `anatolia-sim-release.keystore` (paste as-is into the
 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
 ```
 
-## Fly.io Environment Variables Backup (production app `anatolia-bold-sim`)
+## Render Environment Variables Backup (production service `anatolia-sim`)
 
 Same rationale/scope as the keystore backup above: this repo is private with
 a single collaborator, so this lives here in plain text purely as a recovery
-copy of these values. This backup matters *more* on Fly.io than it did on
-Render: Fly.io secrets, like GitHub secrets, are write-only once set (`fly
-secrets set`/the dashboard's Secrets page never shows a previously-set
-value back), unlike Render's own env var dashboard which stayed readable.
-If this repo's visibility or collaborator list ever changes, move this out
-first — and note that several of these (the third-party API keys,
+copy in case these values are ever lost from the Render dashboard (Render
+env vars, unlike GitHub secrets, are readable in the dashboard, so this is
+convenience, not a write-only-secret workaround -- unlike the brief Fly.io
+period, where secrets were write-only once set and this backup mattered
+more). If this repo's visibility or collaborator list ever changes, move
+this out first — and note that several of these (the third-party API keys,
 `GITHUB_RELEASES_TOKEN`, `JWT_SECRET`/`JWT_REFRESH_SECRET`) are trivially
 rotatable, unlike the keystore, so there is comparatively less reason to
 keep them here long-term.
 
 `DATABASE_URL` and `APP_URL` are deliberately omitted below: `DATABASE_URL`
-must be the Postgres instance's own **external** connection string (an
-internal-only one won't resolve from Fly.io), which isn't recorded in this
-file — set it directly as a Fly.io secret and confirm it there.
-`APP_URL=https://anatolia-bold-sim.fly.dev` should also be set explicitly
-(see `email.rs::app_url` -- no platform-injected fallback exists for it the
-way `RENDER_EXTERNAL_URL` used to provide on Render).
+must be the Postgres instance's own connection string, which isn't recorded
+in this file — set it directly in the Render dashboard and confirm it
+there (the same Postgres instance already in use, so no data migration is
+needed switching back from Fly.io). `APP_URL` no longer needs to be set
+explicitly on Render -- `email.rs::app_url` falls back to
+`RENDER_EXTERNAL_URL`, which Render always injects automatically.
 
 ```
 ADMIN_EMAIL=info@boldkimya.com.tr
