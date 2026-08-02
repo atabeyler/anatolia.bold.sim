@@ -1181,6 +1181,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
 
             if let Some(mother) = child.parent_1_id.as_ref().and_then(|id| index_by_id.get(id)).map(|&idx| &mut state.individuals[idx]) {
                 mother.health.pregnancy = None;
+                hormones::apply_birth_surge(mother);
                 if rand::random::<f64>() < mother_risk {
                     mother.alive = false;
                     mother.is_dead = true;

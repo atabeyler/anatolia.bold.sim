@@ -199,7 +199,12 @@ pub fn process_bonding(ind_a: &mut Individual, ind_b: &mut Individual, interacti
     // has, layered on top rather than replacing the original formula.
     let genetic_bs = (ind_a.phenotype.oxytocin_sensitivity + ind_b.phenotype.oxytocin_sensitivity) / 2.0;
     let dynamic_bs = (ind_a.hormones.oxytocin + ind_b.hormones.oxytocin) / 2.0;
-    let bs = (genetic_bs * 0.8 + dynamic_bs * 0.2).max(0.0);
+    // Vasopressin (hormones.rs) is oxytocin's more male-leaning counterpart in
+    // real pair-bonding/mate-guarding physiology -- a small additional term
+    // from each *male* participant's own current level, on top of (not
+    // instead of) the shared oxytocin term above.
+    let vasopressin_bonus = (if ind_a.sex == "male" { ind_a.hormones.vasopressin } else { 0.0 } + if ind_b.sex == "male" { ind_b.hormones.vasopressin } else { 0.0 }) * 0.1;
+    let bs = (genetic_bs * 0.8 + dynamic_bs * 0.2 + vasopressin_bonus).max(0.0);
     let d = match interaction_type {
         "mating" => 0.3,
         "cooperation" => 0.1,
