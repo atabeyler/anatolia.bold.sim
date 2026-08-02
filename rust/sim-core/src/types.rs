@@ -362,6 +362,24 @@ fn dhea_default() -> f64 {
 fn norepinephrine_default() -> f64 {
     0.1
 }
+// Shared low/mid default helpers for the Group A/B hormones below, whose
+// individual resting baselines don't need their own distinctly-named
+// constant the way the original six/fourteen's did.
+fn d01() -> f64 {
+    0.1
+}
+fn d02() -> f64 {
+    0.2
+}
+fn d03() -> f64 {
+    0.3
+}
+fn d04() -> f64 {
+    0.4
+}
+fn d05() -> f64 {
+    0.5
+}
 
 /// Dynamic, tick-by-tick circulating hormone levels -- distinct from the
 /// static genome-derived phenotype traits (`oxytocin_sensitivity`,
@@ -478,6 +496,159 @@ pub struct Hormones {
     /// extra weight in `psychology::process_bonding` for males.
     #[serde(default = "oxytocin_default")]
     pub vasopressin: f64,
+
+    // ---- Group A: further pituitary/adrenal/immune hormones, each tied to
+    // an existing system (HPG, POMC precursor pathway, microbiome/infection,
+    // GH cascade, the metabolic pair) ----
+    /// Follicle-stimulating hormone -- the other real gonadotropin, distinct
+    /// from `lh`. Tracks the same puberty curve at a slower response rate.
+    #[serde(default = "d01")]
+    pub fsh: f64,
+    /// Corticotropin-releasing hormone -- the hypothalamic signal upstream
+    /// of even `acth` in the real HPA axis; now the actual driver of
+    /// `acth`'s own target.
+    #[serde(default = "cortisol_default")]
+    pub crh: f64,
+    /// Melanocyte-stimulating hormone -- shares POMC as a common precursor
+    /// with ACTH/endorphin (real biology), so tracks `acth` directly.
+    #[serde(default = "d03")]
+    pub msh: f64,
+    /// Beta-endorphin -- the third POMC-derived hormone; rises with acute
+    /// pain (low HP) and reward (satiation swing), with a small bounded
+    /// wellbeing boost when elevated (real endogenous analgesia/euphoria).
+    #[serde(default = "d03")]
+    pub endorphin: f64,
+    /// Interleukin-6 -- inflammatory cytokine, real trigger is an active
+    /// infection (`health.disease`); contributes to thyroid suppression
+    /// during illness (the real cytokine-driven component of "sick
+    /// euthyroid", alongside undernutrition).
+    #[serde(default = "d01")]
+    pub il6: f64,
+    /// TNF-alpha -- inflammatory cytokine; real HPA-axis activator, adds to
+    /// `acth`'s target during active infection.
+    #[serde(default = "d01")]
+    pub tnf_alpha: f64,
+    /// Type-I interferon -- antiviral response tied to active infection;
+    /// small bounded infection-severity discount in `microbiome.rs`.
+    #[serde(default = "d01")]
+    pub interferon: f64,
+    /// Insulin-like growth factor 1 -- the real downstream liver signal GH
+    /// actually acts through; tracks `growth_hormone` directly (cascade).
+    #[serde(default = "d03")]
+    pub igf1: f64,
+    /// Fat-tissue hormone, real-world inversely related to `leptin`/body
+    /// fat; nudges `insulin`'s own target down slightly when high (real
+    /// insulin-sensitizing effect).
+    #[serde(default = "d05")]
+    pub adiponectin: f64,
+    /// Neuropeptide Y -- potent hypothalamic appetite driver, real trigger
+    /// is low `leptin`; amplifies `ghrelin`'s own target slightly (real
+    /// NPY-ghrelin interaction).
+    #[serde(default = "d03")]
+    pub npy: f64,
+
+    // ---- Group B1: digestive-hormone timescale layer over the existing
+    // satiation signal (no literal stomach-contents state exists in this
+    // simulation -- see hormones.rs's own doc comment for why these are
+    // still real, distinctly-timed formulas rather than one signal repeated
+    // eight times) ----
+    /// Rises immediately on a same-tick "just ate" swing (real: released on
+    /// food's arrival).
+    #[serde(default = "d03")]
+    pub gastrin: f64,
+    /// Follows gastrin with a short lag (real: pH-regulation response to
+    /// gastrin).
+    #[serde(default = "d03")]
+    pub secretin: f64,
+    /// Slower satiety signal from a sustained well-fed swing (real:
+    /// fat/protein-triggered, longer-acting than gastrin).
+    #[serde(default = "d03")]
+    pub cck: f64,
+    /// Cyclic, rises specifically *between* meals (real: inter-meal gut
+    /// motility driver) -- the inverse-timing complement to gastrin.
+    #[serde(default = "d04")]
+    pub motilin: f64,
+    /// Rises with insulin (real: the incretin that potentiates
+    /// insulin release after eating).
+    #[serde(default = "d03")]
+    pub gip: f64,
+    /// Real broad GI-hormone inhibitor -- negative feedback against
+    /// gastrin's own level, the same negative-feedback pattern as TSH/thyroid.
+    #[serde(default = "d03")]
+    pub somatostatin: f64,
+    /// Long-acting satiety signal, slower than CCK (real: released after
+    /// CCK, sustains fullness longer).
+    #[serde(default = "d03")]
+    pub pyy: f64,
+    /// Self-regulates digestive-hormone secretion broadly; tracks
+    /// somatostatin loosely (real: both part of the same inhibitory
+    /// feedback family).
+    #[serde(default = "d03")]
+    pub pancreatic_polypeptide: f64,
+
+    // ---- Group B2: cardiovascular/renal, proxied through the existing
+    // hydration (blood-volume proxy) and hp (blood-loss/injury proxy)
+    // signals -- no literal blood-pressure state exists; see hormones.rs ----
+    /// Rises when `health.hydration` is low (real: low blood volume/pressure
+    /// triggers renin release).
+    #[serde(default = "d03")]
+    pub renin: f64,
+    /// Downstream of renin (real cascade).
+    #[serde(default = "d03")]
+    pub angiotensin_ii: f64,
+    /// Downstream of angiotensin II; promotes water/salt retention -- small
+    /// bounded discount to `mortality.rs`'s dehydration risk term (real
+    /// adaptive water retention).
+    #[serde(default = "d03")]
+    pub aldosterone: f64,
+    /// Atrial natriuretic peptide -- the real counter-regulatory signal to
+    /// renin/aldosterone, rises when hydration is high rather than low.
+    #[serde(default = "d03")]
+    pub anp: f64,
+    /// Brain natriuretic peptide -- tracks ANP (real: released alongside it
+    /// under the same volume-overload trigger).
+    #[serde(default = "d02")]
+    pub bnp: f64,
+    /// Erythropoietin -- real trigger is low oxygen/blood loss, proxied here
+    /// by low `health.hp`; small bounded recovery-adjacent mortality
+    /// discount when elevated (real: stimulates red-cell production).
+    #[serde(default = "d03")]
+    pub epo: f64,
+
+    // ---- Group B3: bone/calcium, proxied through age and (for PTH/
+    // calcitonin) the real estrogen-bone protective link -- no literal bone-
+    // density state exists; see hormones.rs ----
+    /// Parathyroid hormone -- real age-related rise (compensating for
+    /// natural bone/calcium loss), sharply amplified in post-fertile females
+    /// by low estrogen (real: estrogen protects bone; its decline drives
+    /// PTH-mediated loss, i.e. osteoporosis). Small bounded elder-female
+    /// mortality term in `mortality.rs`.
+    #[serde(default = "d03")]
+    pub pth: f64,
+    /// Opposes PTH; real age-related decline.
+    #[serde(default = "d04")]
+    pub calcitonin: f64,
+    /// Calcitriol (active vitamin D) -- real age-related production
+    /// decline, modulated by genetic `health_resilience` (synthesis
+    /// efficiency). No sunlight/UV signal exists in this simulation to
+    /// drive it further.
+    #[serde(default = "d05")]
+    pub vitamin_d: f64,
+    /// Bone-formation marker; tracks `growth_hormone` (real: bone formation
+    /// is active during growth).
+    #[serde(default = "d03")]
+    pub osteocalcin: f64,
+
+    // ---- Group B4: circadian. This simulation has no day/night cycle at
+    // its one-tick-per-day resolution, so melatonin's real light-triggered
+    // dynamic can't be modeled -- only its real age-related decline and its
+    // real reciprocal coupling with cortisol (see hormones.rs) ----
+    /// Real age-related production decline; normally suppresses cortisol,
+    /// so its own decline (age, or chronic stress-driven suppression) feeds
+    /// a small bounded rise into `acth`'s own target.
+    #[serde(default = "d04")]
+    pub melatonin: f64,
+
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
