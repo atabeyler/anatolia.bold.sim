@@ -1,10 +1,18 @@
-# fly.toml app configuration file generated for anatolia-bold-sim on 2026-08-02T03:03:20Z
+# Fly.io app config for sim-server (see Dockerfile). App name matches the
+# actual deployed app confirmed via the Fly.io dashboard/Launch UI (see
+# AGENTS.md's production URL, https://anatolia-bold-sim.fly.dev).
 #
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
+# primary_region: the app's Postgres database is hosted in Oregon, US West
+# (confirmed via the DB provider's own dashboard) -- "sjc" (San Jose,
+# California) is the closest region this app's Fly.io plan actually offers
+# (Seattle/"sea" is not in this account's region list), cutting DB
+# round-trip latency from a transatlantic ~9000km (Amsterdam <-> Oregon) hop
+# down to a same-coast one. This alone only steers where *new* machines get
+# created; an already-running machine in "ams" must still be relocated by
+# hand (see AGENTS.md's Tick pacing section for why that round-trip latency
+# matters here).
 app = "anatolia-bold-sim"
-primary_region = 'sjc'
+primary_region = "sjc"
 
 [build]
 
@@ -18,8 +26,7 @@ primary_region = 'sjc'
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
-  processes = ['app']
-  checks = [{ grace_period = '10s', interval = '15s', method = 'GET', path = '/api/health', timeout = '5s' }]
+  processes = ["app"]
 
   [[http_service.checks]]
     interval = "15s"
@@ -28,25 +35,25 @@ primary_region = 'sjc'
     method = "GET"
     path = "/api/health"
 
-# Scaled up via the Fly dashboard (Scale Plan Configuration) to
-# performance-8x / 16GB -- dedicated (not shared) vCPUs, since
-# sim-core's per-tick compute (rayon-parallelized across the population)
-# and the tick loop's spawn_blocking usage both benefit from real CPU
-# throughput, not just avoiding DB latency (see the primary_region comment
-# above for that half of the fix). "performance-cpu-8x" (an extra "-cpu"
-# that snuck in during an earlier fly.toml cleanup) is not a real Fly.io
-# machine size -- `flyctl` rejects it outright ("invalid machine size"),
-# which silently failed every release built from that config while the
-# app kept serving whatever machine was already running beforehand.
-
+# Scaled down via the Fly dashboard (Scale Plan Configuration) to
+# shared-cpu-1x / 256mb. Fly's own "flyio-scale-from-ui" auto-sync bot
+# committed this change as a *second*, additional [[vm]] block on top of the
+# previous performance-8x/16gb one instead of replacing it -- two [[vm]]
+# blocks both implicitly targeting the "app" process is an invalid/ambiguous
+# config, the same class of problem as the earlier "performance-cpu-8x is not
+# a real machine size" incident above this same file's history: `flyctl`
+# either rejects it or silently keeps serving whatever machine was already
+# running. Collapsed back down to the single block that actually matches the
+# dashboard's current setting.
+#
+# Note: this is a real capability drop from the previous dedicated-vCPU
+# performance-8x machine -- sim-core's per-tick compute (rayon-parallelized
+# across the population) and the tick loop's spawn_blocking usage now run on
+# a single shared vCPU instead of 8 dedicated ones. Revisit this sizing if
+# tick throughput/latency regresses under real population load.
 [[vm]]
-  size = 'performance-8x'
-  memory = '16gb'
-
-[[vm]]
-  size = 'shared-cpu-1x'
-  memory = '256mb'
-  cpu_kind = 'shared'
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpu_kind = "shared"
   cpus = 1
   memory_mb = 256
-  processes = ['app']
