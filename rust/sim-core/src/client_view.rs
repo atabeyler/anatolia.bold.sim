@@ -167,16 +167,27 @@ pub fn derive_stats(sim: &SimulationState) -> Value {
         .collect();
 
     let births = sim.individuals.iter().filter(|i| !i.is_founder).count();
-    // Matches population_view's/events_summary's own broader dead-filter
-    // (`!alive || is_dead`) rather than `is_dead` alone -- both fields are
-    // meant to always be set together on every death-writing call site, but
-    // both carry #[serde(default)], so an individual JSON payload missing
-    // just `is_dead` (an older checkpoint format, a partially-written
-    // upsert, a stale WASM-local IndexedDB record) would deserialize with
+    // Prefers the dedicated, monotonic `total_ever_died` counter (see its
+    // own doc comment on state.rs) over counting `sim.individuals` directly
+    // -- that array is *bounded* to alive+recently-dead on several read
+    // paths (`load_bounded_tick_state_no_genealogy`, the one ws.rs's
+    // periodic tick broadcast actually uses), so a long-running simulation
+    // would otherwise have its death count silently drop back toward zero
+    // as deaths aged out of the bounded window, even though the Population
+    // panel's own deceased list (an unbounded DB query) kept showing every
+    // one of them. `total_ever_died` is seeded correctly by every state-
+    // loading path in db.rs regardless of bounding; the `.max(...)` here is
+    // just a floor for callers that construct a `SimulationState` directly
+    // (tests, a freshly-created simulation) without going through one of
+    // those loaders -- individuals-based counting still matches
+    // population_view's/events_summary's own broader dead-filter
+    // (`!alive || is_dead`) rather than `is_dead` alone, since both fields
+    // carry #[serde(default)] and an individual JSON payload missing just
+    // `is_dead` (an older checkpoint format, a partially-written upsert, a
+    // stale WASM-local IndexedDB record) would otherwise deserialize with
     // `alive=false`/`is_dead=false` -- counted as deceased everywhere else,
-    // invisible to this stat alone. This used to leave the Population
-    // panel showing a full deceased list against a "0" death count.
-    let deaths = sim.individuals.iter().filter(|i| i.is_dead || !i.alive).count();
+    // invisible to this stat alone.
+    let deaths = (sim.individuals.iter().filter(|i| i.is_dead || !i.alive).count() as i32).max(sim.total_ever_died) as usize;
     let avg_intelligence = alive.iter().map(|i| i.phenotype.fluid_intelligence).sum::<f64>() / max_n;
     let sick_count = alive.iter().filter(|i| i.health.disease.is_some()).count();
     let sick_rate = sick_count as f64 / max_n;
@@ -760,5 +771,38 @@ mod derive_stats_tests {
         let raw = json!({ "individual_id": "ind-1", "cause": "old_age" });
         let description = build_event_description("death", &raw, &sim);
         assert_eq!(description, "Eve died: old_age");
+    }
+
+    #[test]
+    fn deaths_count_prefers_total_ever_died_over_a_bounded_individuals_array() {
+        // Regression: a caller that loaded a bounded individuals set (see
+        // db.rs's load_bounded_tick_state_no_genealogy, which drops
+        // individuals dead more than DEAD_FIELD_STRIP_GRACE_DAYS ago) but
+        // correctly seeded total_ever_died from an unbounded source must
+        // still report the true historical total, not just however many
+        // dead individuals happen to still be present in `individuals`.
+        let sim = SimulationState {
+            individuals: vec![Individual { alive: true, is_dead: false, ..Default::default() }],
+            total_ever_died: 12,
+            ..Default::default()
+        };
+        let stats = derive_stats(&sim);
+        assert_eq!(stats.get("deaths").and_then(Value::as_i64), Some(12));
+    }
+
+    #[test]
+    fn deaths_count_falls_back_to_individuals_when_total_ever_died_is_unset() {
+        // A SimulationState constructed directly (tests, a freshly-created
+        // simulation) without total_ever_died explicitly seeded must still
+        // get a correct count from whatever's actually in `individuals`.
+        let sim = SimulationState {
+            individuals: vec![
+                Individual { alive: true, is_dead: false, ..Default::default() },
+                Individual { alive: false, is_dead: true, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let stats = derive_stats(&sim);
+        assert_eq!(stats.get("deaths").and_then(Value::as_i64), Some(1));
     }
 }

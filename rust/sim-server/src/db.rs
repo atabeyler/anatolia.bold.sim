@@ -1090,6 +1090,7 @@ struct StateForPersistence<'a> {
     events: &'a [Value],
     milestones: &'a [String],
     total_ever_born: i32,
+    total_ever_died: i32,
     #[serde(flatten)]
     extra: &'a serde_json::Map<String, Value>,
 }
@@ -1122,6 +1123,7 @@ fn state_json_for_db(state: &SimulationState) -> Value {
         events: &state.events,
         milestones: &state.milestones,
         total_ever_born: state.total_ever_born,
+        total_ever_died: state.total_ever_died,
         extra: &state.extra,
     })
     .unwrap_or_else(|_| json!({}))
@@ -1755,6 +1757,11 @@ pub async fn load_full_state(backend: &DbBackend, id: &str) -> Result<Option<Sim
     let Some(row) = row_result? else { return Ok(None) };
     let mut state = row_to_state(&row);
     state.individuals = payloads_result?.into_iter().filter_map(|p| serde_json::from_value(p).ok()).collect();
+    // Unlike the bounded loader, every individual this simulation has ever
+    // had is already present in `state.individuals` here, so total_ever_died
+    // (see its own doc comment on state.rs) can be derived directly instead
+    // of needing a separate COUNT query.
+    state.total_ever_died = state.individuals.iter().filter(|i| i.is_dead || !i.alive).count() as i32;
     Ok(Some(state))
 }
 
@@ -1845,9 +1852,36 @@ pub async fn load_bounded_tick_state_no_genealogy(backend: &DbBackend, id: &str)
     let Some(row) = load_simulation(backend, id).await? else { return Ok(None) };
     let mut state = row_to_state(&row);
     let cutoff_day = state.current_day - sim_core::DEAD_FIELD_STRIP_GRACE_DAYS;
-    let payloads = load_individual_payloads_bounded(backend, id, cutoff_day).await?;
-    state.individuals = payloads.into_iter().filter_map(|p| serde_json::from_value(p).ok()).collect();
+    let (payloads, dead_count) = tokio::join!(load_individual_payloads_bounded(backend, id, cutoff_day), count_dead_individuals(backend, id));
+    state.individuals = payloads?.into_iter().filter_map(|p| serde_json::from_value(p).ok()).collect();
+    // total_ever_died must reflect *every* death this simulation has ever
+    // had, not just the ones still within the strip grace window above --
+    // see its own doc comment on state.rs. A cheap COUNT query alongside
+    // the bounded payload fetch keeps this correct without loading every
+    // dead individual's full JSON payload just to count them.
+    state.total_ever_died = dead_count?.max(state.total_ever_died as i64) as i32;
     Ok(Some(state))
+}
+
+/// The true, unbounded count of individuals this simulation has ever marked
+/// dead/not-alive -- used to seed `total_ever_died` (see its own doc
+/// comment on state.rs) from a state-loading path that otherwise only ever
+/// sees a bounded slice of `individuals`. Mirrors `load_individual_payloads`'s
+/// own `(alive = false OR is_dead = true)` predicate.
+async fn count_dead_individuals(backend: &DbBackend, simulation_id: &str) -> Result<i64, sqlx::Error> {
+    if let Some(pool) = as_pg(backend) {
+        return sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM individuals WHERE simulation_id = $1::uuid AND (alive = false OR is_dead = true)")
+            .bind(simulation_id)
+            .fetch_one(pool)
+            .await;
+    }
+    if let Some(pool) = as_sqlite(backend) {
+        return sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM individuals WHERE simulation_id = ? AND (alive = 0 OR is_dead = 1)")
+            .bind(simulation_id)
+            .fetch_one(pool)
+            .await;
+    }
+    Ok(0)
 }
 
 /// Bounded counterpart to `load_individual_payloads`: excludes only rows

@@ -1186,6 +1186,50 @@ were live but a native (bundled-client) build hadn't picked them up yet:**
   next thing to check is whether the reporter's own app build is that
   recent, not whether the fix regressed.
 
+**The actual root cause behind the death-count symptom, found once the
+above was ruled out (reproduced on the always-latest browser cloud path
+too, so this one predates and is independent of every fix above):**
+`derive_stats`'s `deaths` field used to be a live count over
+`sim.individuals`, correct only as long as that array holds every
+individual the simulation has ever had. It doesn't: `ws.rs`'s periodic
+tick broadcast -- the one thing that keeps a watching client's `stats`
+current after the first page load -- sources its state from
+`load_bounded_tick_state_no_genealogy` (db.rs), which *deliberately*
+excludes anyone dead more than `DEAD_FIELD_STRIP_GRACE_DAYS` (7 days) ago
+from `individuals` entirely, to avoid loading full JSON payloads the tick
+loop itself would never look at again. On any simulation that's been
+running longer than a week, that's every death that's ever happened --
+so the live stats HUD's own death counter kept sliding back down toward
+zero as each death aged out of the bounded window, while the Population
+panel's deceased list (`GET /population?alive=false`, an unbounded direct
+DB query, unaffected by any of this) kept showing every one of them
+correctly the whole time.
+
+The fix is `SimulationState.total_ever_died: i32` (`state.rs`) -- a
+dedicated, monotonic counter, the same fix `total_ever_born` already is
+for the identical problem on the births side. `tick.rs` increments it
+once per tick by counting this tick's own `"death"`-type events (already
+pushed by every death-producing path -- mortality, birth complications,
+`environment::process_disaster`, `social::process_intergroup_conflict`,
+`microbiome::process_microbiome_tick` -- see the death-event-delivery
+notes above) rather than needing every one of those call sites to touch a
+`&mut SimulationState` counter individually. Every state-loading path
+seeds it correctly regardless of bounding: `load_full_state` derives it
+directly from its own already-unbounded `individuals` (no extra query
+needed); `load_bounded_tick_state_no_genealogy` runs a cheap
+`COUNT(*) WHERE (alive = false OR is_dead = true)` alongside its existing
+bounded payload fetch, since that's real information the bounded
+individuals array itself can no longer provide. `derive_stats`'s `deaths`
+then reads `individuals-based count.max(sim.total_ever_died)` -- the
+`.max` is a floor for callers that construct a `SimulationState` directly
+(tests, a freshly-created simulation) without ever seeding
+`total_ever_died` explicitly, not a hedge against the counter itself
+being wrong. No DB schema migration was needed: `total_ever_died` rides
+along in `state_json` like any other `SimulationState` field, and every
+loader recomputes/reseeds it fresh from the `individuals` table on every
+load regardless of what was last persisted, so there's nothing to
+backfill for simulations that predate this fix.
+
 ## Common Patterns
 
 ```js
