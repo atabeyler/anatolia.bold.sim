@@ -23,6 +23,13 @@ export async function checkForDesktopUpdate(): Promise<DesktopUpdateInfo | null>
   }
 }
 
+function getDesktopChooserUrl(): string {
+  if (typeof window === 'undefined') return '/';
+  const ua = navigator.userAgent || '';
+  const isWindows = /Windows/i.test(ua);
+  return isWindows ? 'https://tauri.localhost' : 'tauri://localhost';
+}
+
 // Returns to dist-chooser's Cloud/Local selection screen from anywhere
 // further into the app -- e.g. LoginPage's own "back to selection" link,
 // mirroring the one web visitors already get from BrowserModeGate.
@@ -60,7 +67,11 @@ export async function returnToDesktopChooser(): Promise<void> {
     // though a plain reload lands back on this same local server rather
     // than the actual dist-chooser (the only true fix for that is
     // relaunch() succeeding).
-    console.error('[returnToDesktopChooser] relaunch() failed, falling back to reload:', err);
-    window.location.reload();
+    console.error('[returnToDesktopChooser] relaunch() failed, falling back to chooser URL:', err);
+    try {
+      window.location.href = getDesktopChooserUrl();
+    } catch {
+      window.location.reload();
+    }
   }
 }

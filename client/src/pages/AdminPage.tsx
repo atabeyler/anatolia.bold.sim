@@ -5,6 +5,7 @@ import axios from 'axios';
 import { useSimStore } from '../store/simStore';
 import { LogOut, CheckCircle, XCircle, Ban, Trash2, ShieldOff, Clock, Eye, EyeOff } from 'lucide-react';
 import { text, type LangCode } from '../utils/i18n';
+import { cloudUrl } from '../utils/cloud';
 
 const LOCALE_MAP: Record<string, string> = { tr: 'tr-TR', en: 'en-US', de: 'de-DE', fr: 'fr-FR', ar: 'ar-SA' };
 
@@ -72,7 +73,7 @@ export default function AdminPage() {
     const retryDelaysMs = [300, 800, 1500, 3000];
     for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
       try {
-        const { data } = await axios.get('/api/admin/users', { headers });
+        const { data } = await axios.get(cloudUrl('/api/admin/users'), { headers });
         setUsers(data);
         setLoadError(false);
         return;
@@ -84,30 +85,30 @@ export default function AdminPage() {
   }
 
   async function approve(id: string) {
-    await axios.post(`/api/admin/users/${id}/approve`, {}, { headers });
+    await axios.post(cloudUrl(`/api/admin/users/${id}/approve`), {}, { headers });
     load();
   }
 
   async function reject(id: string) {
     if (!confirm(text(l, { tr: 'Kayıt talebi reddedilsin mi?', en: 'Reject this registration request?', de: 'Diese Registrierungsanfrage ablehnen?', fr: "Rejeter cette demande d'inscription ?", ar: 'رفض طلب التسجيل هذا؟' }))) return;
-    await axios.post(`/api/admin/users/${id}/reject`, {}, { headers });
+    await axios.post(cloudUrl(`/api/admin/users/${id}/reject`), {}, { headers });
     load();
   }
 
   async function ban(id: string) {
-    await axios.post(`/api/admin/users/${id}/ban`, { reason: banReason }, { headers });
+    await axios.post(cloudUrl(`/api/admin/users/${id}/ban`), { reason: banReason }, { headers });
     setBanTarget(null); setBanReason('');
     load();
   }
 
   async function unban(id: string) {
-    await axios.post(`/api/admin/users/${id}/unban`, {}, { headers });
+    await axios.post(cloudUrl(`/api/admin/users/${id}/unban`), {}, { headers });
     load();
   }
 
   async function deleteUser(id: string) {
     if (!confirm(text(l, { tr: 'Kullanıcı kalıcı olarak silinsin mi?', en: 'Permanently delete this user?', de: 'Diesen Benutzer dauerhaft löschen?', fr: 'Supprimer définitivement cet utilisateur ?', ar: 'حذف هذا المستخدم نهائياً؟' }))) return;
-    await axios.delete(`/api/admin/users/${id}`, { headers });
+    await axios.delete(cloudUrl(`/api/admin/users/${id}`), { headers });
     load();
   }
 
