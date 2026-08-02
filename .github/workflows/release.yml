@@ -41,6 +41,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -57,7 +59,26 @@ jobs:
         with:
           workspaces: |
             rust
+            rust/sim-wasm
             desktop/src-tauri
+
+      # build:wasm (npm run build's first step) installs its own pinned
+      # nightly toolchain + rust-src + wasm32-unknown-unknown target via
+      # rustup every single run (see scripts/build-wasm.mjs) -- unlike the
+      # stable toolchain above (set up once by dtolnay/rust-toolchain, which
+      # GitHub's runner image already ships pre-cached), this nightly one is
+      # downloaded from scratch on every job. Caching ~/.rustup lets rustup
+      # skip that download whenever the pinned nightly hasn't changed since
+      # the last run. Keyed on build-wasm.mjs's own hash (that's where
+      # NIGHTLY is defined) rather than a fixed string, so bumping the
+      # pinned version automatically busts this cache instead of silently
+      # restoring a stale toolchain forever (actions/cache never overwrites
+      # an existing key).
+      - name: Cache rustup nightly toolchain (sim-wasm)
+        uses: actions/cache@v4
+        with:
+          path: ~/.rustup
+          key: ${{ runner.os }}-rustup-sim-wasm-nightly-${{ hashFiles('scripts/build-wasm.mjs') }}
 
       - name: Cache Tauri CLI
         uses: actions/cache@v4
