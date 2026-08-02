@@ -86,9 +86,49 @@ use super::biology::individual::get_age;
 /// own shape/rounding convention -- surfaced by client_view::derive_stats as
 /// `stats.mean_hormones` for the client (PsychologyPanel's "Hormonal System"
 /// section) to render without shipping every individual's full hormone
-/// struct on every stats poll.
-pub fn compute_population_hormone_stats(population: &[Individual]) -> Value {
+/// struct on every stats poll. Alongside the population-wide overall
+/// average (unchanged, top-level keys), also breaks the same 49-hormone
+/// average down by sex (`female`/`male`) and age band (`child`/`adult`/
+/// `elderly`) under `by_group` -- a flat population mean hides real
+/// physiological differences a hormone system should show (e.g. a
+/// population's pregnant-age females carrying different estrogen/
+/// progesterone levels than its children, or its elders' declining
+/// testosterone/estrogen).
+pub fn compute_population_hormone_stats(population: &[Individual], current_day: i32) -> Value {
     let living: Vec<&Individual> = population.iter().filter(|i| i.alive && !i.is_dead).collect();
+    let mut result = hormone_group_stats(&living);
+    let female: Vec<&Individual> = living.iter().copied().filter(|i| i.sex == "female").collect();
+    let male: Vec<&Individual> = living.iter().copied().filter(|i| i.sex == "male").collect();
+    let child: Vec<&Individual> = living.iter().copied().filter(|i| get_age(i, current_day) < 18.0).collect();
+    let adult: Vec<&Individual> = living
+        .iter()
+        .copied()
+        .filter(|i| {
+            let age = get_age(i, current_day);
+            (18.0..60.0).contains(&age)
+        })
+        .collect();
+    let elderly: Vec<&Individual> = living.iter().copied().filter(|i| get_age(i, current_day) >= 60.0).collect();
+    if let Value::Object(ref mut map) = result {
+        map.insert(
+            "by_group".to_string(),
+            json!({
+                "female": hormone_group_stats(&female),
+                "male": hormone_group_stats(&male),
+                "child": hormone_group_stats(&child),
+                "adult": hormone_group_stats(&adult),
+                "elderly": hormone_group_stats(&elderly),
+            }),
+        );
+    }
+    result
+}
+
+/// The actual per-hormone averaging over an arbitrary subset of living
+/// individuals -- shared by `compute_population_hormone_stats`'s own
+/// overall figure and each of its `by_group` breakdowns, so the 49-field
+/// list is written once instead of six times.
+fn hormone_group_stats(living: &[&Individual]) -> Value {
     if living.is_empty() {
         return json!({
             "cortisol": 0.0, "adrenaline": 0.0, "testosterone": 0.0, "estrogen": 0.0, "dopamine": 0.0, "oxytocin": 0.0,
@@ -233,6 +273,38 @@ fn sex_hormone_baselines(sex: &str, age_years: f64, dominance: f64, fertility: f
     }
 }
 
+/// Real average ovarian cycle length.
+const CYCLE_LENGTH_DAYS: i64 = 28;
+/// Real average ovulation timing within a 28-day cycle (0-indexed day, so
+/// day 13 is the cycle's 14th day).
+const OVULATION_DAY: f64 = 13.0;
+
+/// Returns `(lh_bump, fsh_bump, estrogen_bump, progesterone_bump)` for a
+/// given day within the ~28-day ovarian cycle -- each an additive bonus
+/// layered on top of `update_hormones`'s existing puberty/senescence
+/// baseline for a cycling female, not a replacement for it. LH surges
+/// sharply right at ovulation (the real trigger for the egg's release); FSH
+/// peaks a couple of days earlier (the real follicular-maturation signal);
+/// estrogen rises through the follicular phase into ovulation (the real
+/// pre-ovulatory estrogen peak); progesterone only rises afterward, peaking
+/// mid-luteal-phase (the real post-ovulation corpus-luteum signal) and
+/// tapering back down by the cycle's end if no pregnancy occurs.
+fn cycle_phase(cycle_day: i64) -> (f64, f64, f64, f64) {
+    let d = cycle_day as f64;
+    let dist_from_ovulation = (d - OVULATION_DAY).abs();
+    let lh_bump = (-(dist_from_ovulation * dist_from_ovulation) / 8.0).exp() * 0.75;
+    let fsh_dist = d - (OVULATION_DAY - 2.0);
+    let fsh_bump = (-(fsh_dist * fsh_dist) / 20.0).exp() * 0.4;
+    let estrogen_bump = (-(dist_from_ovulation * dist_from_ovulation) / 30.0).exp() * 0.35;
+    let progesterone_bump = if d > OVULATION_DAY {
+        let luteal_day = d - OVULATION_DAY;
+        (-((luteal_day - 7.0) * (luteal_day - 7.0)) / 30.0).exp() * 0.6
+    } else {
+        0.0
+    };
+    (lh_bump, fsh_bump, estrogen_bump, progesterone_bump)
+}
+
 fn dopamine_baseline(curiosity: f64, risk_tolerance: f64) -> f64 {
     (0.35 + curiosity * 0.1 + risk_tolerance * 0.1).clamp(0.0, 1.0)
 }
@@ -241,29 +313,40 @@ fn oxytocin_baseline(oxytocin_sensitivity: f64) -> f64 {
     (oxytocin_sensitivity * 0.3).clamp(0.0, 1.0)
 }
 
-/// Genetic/age baseline at birth (day 0 of this individual's life) -- called
-/// once by every individual-creation path (`create_founder`, `create_child`,
-/// `migrate_individual_arrival`), the same way `epigenetics::snapshot_genetic_baseline`
-/// is. Nothing here reads any per-tick state; it exists purely so a
-/// newborn's very first tick already has a sane, genetically-grounded
-/// starting point instead of a flat default.
-pub fn initialize_hormones(individual: &mut Individual) {
+/// Genetic/age baseline at creation -- called once by every individual-
+/// creation path (`create_founder`, `create_child`, `migrate_individual_arrival`),
+/// the same way `epigenetics::snapshot_genetic_baseline` is. `current_day` is
+/// this individual's own creation day (the simulation day at which
+/// `birth_day` is set), so `get_age` yields the individual's real age at
+/// creation -- 0 for a newborn, but the founder's/migrant's own configured
+/// adult age for those two paths. Without this, an adult founder or migrant
+/// arrival would seed infant/prepubertal hormone levels (e.g. near-zero
+/// testosterone/estrogen, LH/FSH still at their pre-puberty floor) on their
+/// very first tick, only catching up to their real age-appropriate baseline
+/// after years of in-sim `update_hormones` convergence. Nothing here reads
+/// any per-tick state beyond that.
+pub fn initialize_hormones(individual: &mut Individual, current_day: i32) {
+    let age_years = get_age(individual, current_day).max(0.0);
     let p = &individual.phenotype;
     let cortisol = (0.25 + p.stress_reactivity * 0.25).clamp(0.0, 1.0);
     let acth = cortisol;
     let adrenaline = 0.05;
     let norepinephrine = 0.1;
-    let (testosterone, estrogen) = sex_hormone_baselines(&individual.sex, 0.0, p.dominance, p.fertility);
+    let (testosterone, estrogen) = sex_hormone_baselines(&individual.sex, age_years, p.dominance, p.fertility);
     let dopamine = dopamine_baseline(p.curiosity, p.risk_tolerance);
     let oxytocin = oxytocin_baseline(p.oxytocin_sensitivity);
     let vasopressin_sensitivity = (p.parental_care * 0.5 + p.cooperation * 0.5).clamp(0.0, 1.0);
     let vasopressin = (vasopressin_sensitivity * 0.3).clamp(0.0, 1.0);
     let tsh = 0.5;
     let thyroid = 0.5;
-    let lh = puberty_curve(0.0);
-    let dhea = dhea_curve(0.0);
-    let growth_hormone = growth_hormone_curve(0.0);
-    let progesterone = if individual.sex == "female" { 0.15 } else { 0.05 };
+    let lh = puberty_curve(age_years);
+    let dhea = dhea_curve(age_years);
+    let growth_hormone = growth_hormone_curve(age_years);
+    let progesterone = if individual.sex == "female" {
+        if age_years >= 15.0 { 0.1 + p.fertility * 0.1 * puberty_curve(age_years) } else { 0.05 }
+    } else {
+        0.05
+    };
     individual.hormones = Hormones {
         cortisol,
         adrenaline,
@@ -289,7 +372,7 @@ pub fn initialize_hormones(individual: &mut Individual) {
         // converges every one of these toward its own real formula within a
         // handful of ticks, so a precise birth-time value isn't needed here
         // (matching tsh/thyroid/insulin/... above, already flat starts).
-        fsh: puberty_curve(0.0),
+        fsh: puberty_curve(age_years),
         crh: cortisol,
         msh: acth,
         endorphin: 0.3,
@@ -438,31 +521,64 @@ pub fn update_hormones(individual: &mut Individual, current_day: i32) {
     // gamete maturation, LH triggers the actual hormone-release pulse (the
     // one `testosterone`/`estrogen` below track); both follow the same
     // puberty timeline but FSH responds more slowly.
-    let fsh_target = puberty_curve(age_years);
-    let fsh = h.fsh + (fsh_target - h.fsh) * 0.08;
-    let lh_target = puberty_curve(age_years);
-    let lh = h.lh + (lh_target - h.lh) * 0.12;
+    //
+    // Female ovarian cycle: a reproductive-age, non-pregnant female's own LH/
+    // FSH/estrogen/progesterone additionally ride a ~28-day cycle (real
+    // pregnancy suppresses cycling entirely, so `cycle_day` only advances
+    // while `cycling` below holds), layered on top of (never replacing) the
+    // existing puberty/senescence baseline every other individual already
+    // uses. `cycle_day` is tracked in `extra["_cycle_day"]`, the same pattern
+    // `satiation`/`_waterFear` already use for volatile per-individual state.
+    let pregnant = individual.health.pregnancy.is_some();
+    let cycling = sex == "female" && age_years >= 15.0 && age_years < 50.0 && !pregnant;
+    let cycle_day: i64 = if cycling {
+        let prev = individual.extra.get("_cycle_day").and_then(Value::as_i64).unwrap_or(0);
+        let next = (prev + 1) % CYCLE_LENGTH_DAYS;
+        individual.extra.insert("_cycle_day".to_string(), json!(next));
+        next
+    } else {
+        if pregnant {
+            // Real pregnancy resets cycling to start fresh postpartum.
+            individual.extra.insert("_cycle_day".to_string(), json!(0));
+        }
+        0
+    };
+    let (cycle_lh_bump, cycle_fsh_bump, cycle_estrogen_bump, cycle_progesterone_bump) = if cycling { cycle_phase(cycle_day) } else { (0.0, 0.0, 0.0, 0.0) };
+
+    let fsh_target = (puberty_curve(age_years) + cycle_fsh_bump).clamp(0.0, 1.0);
+    let fsh_rate = if cycle_fsh_bump > 0.05 { 0.2 } else { 0.08 };
+    let fsh = h.fsh + (fsh_target - h.fsh) * fsh_rate;
+    // A cycling female's own LH rests well below the adult plateau between
+    // surges (real basal LH is low outside the ovulatory window) instead of
+    // sitting flat at the puberty-complete ceiling every other individual's
+    // LH does; a fast blend rate during the surge window mirrors the real
+    // LH surge's own ~24-48h sharpness far better than the slow default
+    // puberty-tracking rate would.
+    let lh_target = if cycling { (0.25 + cycle_lh_bump).clamp(0.0, 1.0) } else { puberty_curve(age_years) };
+    let lh_rate = if cycle_lh_bump > 0.05 { 0.35 } else { 0.12 };
+    let lh = h.lh + (lh_target - h.lh) * lh_rate;
     let dhea_target = dhea_curve(age_years);
     let dhea = h.dhea + (dhea_target - h.dhea) * 0.05;
     let (base_t, base_e) = sex_hormone_baselines(&sex, age_years, p.dominance, p.fertility);
-    let pregnant = individual.health.pregnancy.is_some();
     let lh_gain = 0.7 + 0.3 * lh;
     let dhea_gain = 0.85 + 0.15 * dhea;
     let testosterone_target = (base_t * lh_gain * dhea_gain).clamp(0.0, 1.0);
     let testosterone = h.testosterone + (testosterone_target - h.testosterone) * 0.1;
     let estrogen_base = if pregnant { (base_e * 1.6).min(1.0) } else { base_e };
-    let estrogen_target = (estrogen_base * lh_gain * dhea_gain).clamp(0.0, 1.0);
-    let estrogen = h.estrogen + (estrogen_target - h.estrogen) * 0.1;
+    let estrogen_target = (estrogen_base * lh_gain * dhea_gain + cycle_estrogen_bump).clamp(0.0, 1.0);
+    let estrogen_rate = if cycle_estrogen_bump > 0.05 { 0.25 } else { 0.1 };
+    let estrogen = h.estrogen + (estrogen_target - h.estrogen) * estrogen_rate;
 
-    // ---- Progesterone: pregnancy-specific, distinct from estrogen's own dynamic ----
+    // ---- Progesterone: pregnancy-specific, plus the cycle's own luteal-phase rise ----
     let progesterone_target = if pregnant {
         0.85
     } else if sex == "female" {
-        (0.1 + p.fertility * 0.1 * puberty_curve(age_years)).clamp(0.0, 1.0)
+        (0.1 + p.fertility * 0.1 * puberty_curve(age_years) + cycle_progesterone_bump).clamp(0.0, 1.0)
     } else {
         0.05
     };
-    let progesterone = h.progesterone + (progesterone_target - h.progesterone) * 0.12;
+    let progesterone_rate = if cycle_progesterone_bump > 0.05 { 0.2 } else { 0.12 };
+    let progesterone = h.progesterone + (progesterone_target - h.progesterone) * progesterone_rate;
 
     // ---- Growth hormone: age-curve only (see module doc comment) ----
     let growth_hormone_target = growth_hormone_curve(age_years);
@@ -471,6 +587,21 @@ pub fn update_hormones(individual: &mut Individual, current_day: i32) {
     let igf1 = h.igf1 + (growth_hormone - h.igf1) * 0.05;
     // Osteocalcin: real bone-formation marker, active alongside growth.
     let osteocalcin = h.osteocalcin + (growth_hormone - h.osteocalcin) * 0.05;
+    // A small, bounded real feedback from IGF-1 into `health.hp` recovery --
+    // GH/IGF-1's real physiological role is tissue growth/repair, not just a
+    // number that tracks age and is never read anywhere else. Gated on
+    // adequate nutrition (real GH/IGF-1 tissue-building activity requires a
+    // fed state) and roughly 2.5x stronger before adulthood, mirroring how
+    // much more GH/IGF-1-driven real childhood/adolescent growth and
+    // recovery is than adult tissue maintenance. `health.hp` isn't covered
+    // by this module's own cardinal-rule restriction (that only covers
+    // `individual.hormones` itself), the same way mortality.rs/tick.rs
+    // already write to it directly.
+    if satiation >= 0.4 {
+        let growth_stage_multiplier = if age_years < 18.0 { 1.0 } else { 0.4 };
+        let igf1_recovery = igf1 * 0.004 * growth_stage_multiplier;
+        individual.health.hp = (individual.health.hp + igf1_recovery).min(individual.health.max_hp);
+    }
 
     // ---- Digestive-hormone timescale layer over the satiation signal ----
     // No literal stomach-contents state exists in this simulation (only the
@@ -664,7 +795,7 @@ mod tests {
     #[test]
     fn initialize_seeds_a_prepubertal_baseline_not_a_flat_default() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         // Age 0 -> puberty_curve(0) == 0.0, so testosterone should sit at its
         // prepubertal floor, not the adult plateau.
         assert!(ind.hormones.testosterone < 0.2, "expected a prepubertal testosterone floor, got {}", ind.hormones.testosterone);
@@ -673,7 +804,7 @@ mod tests {
     #[test]
     fn male_testosterone_rises_through_puberty_and_plateaus_in_adulthood() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=(25 * 365) {
             update_hormones(&mut ind, day);
         }
@@ -684,7 +815,7 @@ mod tests {
     #[test]
     fn female_estrogen_rises_through_puberty_and_plateaus_in_adulthood() {
         let mut ind = base_individual("female");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=(25 * 365) {
             update_hormones(&mut ind, day);
         }
@@ -695,7 +826,7 @@ mod tests {
     #[test]
     fn pregnancy_elevates_estrogen_above_the_non_pregnant_baseline() {
         let mut ind = base_individual("female");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=(25 * 365) {
             update_hormones(&mut ind, day);
         }
@@ -710,7 +841,7 @@ mod tests {
     #[test]
     fn pregnancy_elevates_progesterone_far_above_the_non_pregnant_baseline() {
         let mut ind = base_individual("female");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=(25 * 365) {
             update_hormones(&mut ind, day);
         }
@@ -725,7 +856,7 @@ mod tests {
     #[test]
     fn male_testosterone_declines_past_fifty_but_never_collapses() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=(30 * 365) {
             update_hormones(&mut ind, day);
         }
@@ -741,7 +872,7 @@ mod tests {
     #[test]
     fn critically_low_hp_spikes_adrenaline() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.health.hp = 0.1;
         update_hormones(&mut ind, 1);
         assert!(ind.hormones.adrenaline > 0.3, "critical HP should spike adrenaline, got {}", ind.hormones.adrenaline);
@@ -750,7 +881,7 @@ mod tests {
     #[test]
     fn adrenaline_clears_fast_once_the_threat_passes() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.health.hp = 0.1;
         update_hormones(&mut ind, 1);
         let spiked = ind.hormones.adrenaline;
@@ -763,7 +894,7 @@ mod tests {
     #[test]
     fn severe_acute_hunger_also_spikes_adrenaline_via_ghrelin() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=5 {
             ind.extra.insert("satiation".to_string(), serde_json::json!(0.02));
             update_hormones(&mut ind, day);
@@ -775,7 +906,7 @@ mod tests {
     #[test]
     fn high_stress_raises_cortisol_toward_a_reactivity_scaled_target_via_acth() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.psychology.stress_level = 0.9;
         for day in 1..=10 {
             update_hormones(&mut ind, day);
@@ -788,7 +919,7 @@ mod tests {
     fn cortisol_never_leaves_the_unit_interval_under_sustained_maximum_stress() {
         let mut ind = base_individual("male");
         ind.phenotype.stress_reactivity = 1.0;
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.psychology.stress_level = 1.0;
         for day in 1..=3650 {
             update_hormones(&mut ind, day);
@@ -799,7 +930,7 @@ mod tests {
     #[test]
     fn a_recent_meal_after_hunger_gives_a_dopamine_reward_bump() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.extra.insert("satiation".to_string(), serde_json::json!(0.2));
         update_hormones(&mut ind, 1);
         let hungry_dopamine = ind.hormones.dopamine;
@@ -811,7 +942,7 @@ mod tests {
     #[test]
     fn thyroid_falls_under_sustained_undernourishment() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=60 {
             ind.extra.insert("satiation".to_string(), serde_json::json!(0.9));
             update_hormones(&mut ind, day);
@@ -827,7 +958,7 @@ mod tests {
     #[test]
     fn tsh_rises_when_thyroid_output_is_low_real_negative_feedback() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.hormones.thyroid = 0.1;
         update_hormones(&mut ind, 1);
         assert!(ind.hormones.tsh > 0.5, "low thyroid should trigger a TSH negative-feedback rise, got {}", ind.hormones.tsh);
@@ -836,7 +967,7 @@ mod tests {
     #[test]
     fn dhea_peaks_in_young_adulthood_and_declines_with_age() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=(25 * 365) {
             update_hormones(&mut ind, day);
         }
@@ -851,10 +982,10 @@ mod tests {
     #[test]
     fn group_membership_elevates_ambient_oxytocin_and_vasopressin_over_isolation() {
         let mut solo = base_individual("male");
-        initialize_hormones(&mut solo);
+        initialize_hormones(&mut solo, 0);
         solo.group_id = None;
         let mut grouped = base_individual("male");
-        initialize_hormones(&mut grouped);
+        initialize_hormones(&mut grouped, 0);
         grouped.group_id = Some("g1".to_string());
         for day in 1..=30 {
             update_hormones(&mut solo, day);
@@ -867,9 +998,9 @@ mod tests {
     #[test]
     fn mating_surges_lh_oxytocin_vasopressin_testosterone_and_estrogen_in_both_parents() {
         let mut mother = base_individual("female");
-        initialize_hormones(&mut mother);
+        initialize_hormones(&mut mother, 0);
         let mut father = base_individual("male");
-        initialize_hormones(&mut father);
+        initialize_hormones(&mut father, 0);
         let (mo_t, mo_e, mo_ox, mo_avp, mo_lh) = (mother.hormones.testosterone, mother.hormones.estrogen, mother.hormones.oxytocin, mother.hormones.vasopressin, mother.hormones.lh);
         let (fa_t, fa_e, fa_ox, fa_avp, fa_lh) = (father.hormones.testosterone, father.hormones.estrogen, father.hormones.oxytocin, father.hormones.vasopressin, father.hormones.lh);
         apply_mating_surge(&mut mother, &mut father);
@@ -880,7 +1011,7 @@ mod tests {
     #[test]
     fn birth_surges_prolactin_which_then_decays_slowly() {
         let mut mother = base_individual("female");
-        initialize_hormones(&mut mother);
+        initialize_hormones(&mut mother, 0);
         let baseline = mother.hormones.prolactin;
         apply_birth_surge(&mut mother);
         let surged = mother.hormones.prolactin;
@@ -893,7 +1024,7 @@ mod tests {
     #[test]
     fn every_hormone_stays_within_the_unit_interval_over_a_long_run() {
         let mut ind = base_individual("female");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         for day in 1..=(90 * 365) {
             ind.health.pregnancy = if day % 270 < 30 { Some(day) } else { None };
             ind.psychology.stress_level = ((day % 100) as f64) / 100.0;
@@ -921,7 +1052,7 @@ mod tests {
     #[test]
     fn active_infection_spikes_il6_tnf_alpha_and_interferon() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.extra.insert("infections".to_string(), serde_json::json!([{ "pathogen_id": "respiratory_common", "days_remaining": 5 }]));
         for day in 1..=10 {
             update_hormones(&mut ind, day);
@@ -935,14 +1066,14 @@ mod tests {
     fn igf1_and_osteocalcin_track_growth_hormone() {
         let mut child = base_individual("male");
         child.birth_day = 0;
-        initialize_hormones(&mut child);
+        initialize_hormones(&mut child, 0);
         for day in 1..=(12 * 365) {
             update_hormones(&mut child, day);
         }
         let child_igf1 = child.hormones.igf1;
         let mut elder = base_individual("male");
         elder.birth_day = 0;
-        initialize_hormones(&mut elder);
+        initialize_hormones(&mut elder, 0);
         for day in 1..=(70 * 365) {
             update_hormones(&mut elder, day);
         }
@@ -950,9 +1081,102 @@ mod tests {
     }
 
     #[test]
+    fn well_fed_igf1_gives_a_small_hp_recovery_boost_stronger_before_adulthood() {
+        let mut child = base_individual("male");
+        child.health.hp = 0.5;
+        initialize_hormones(&mut child, 0);
+        // Push growth hormone/IGF-1 to a high level directly so the recovery
+        // term is measurable within a short run rather than waiting years
+        // for the age-curve to converge there naturally.
+        child.hormones.growth_hormone = 1.0;
+        child.hormones.igf1 = 1.0;
+        for day in 1..=10 {
+            child.extra.insert("satiation".to_string(), serde_json::json!(0.8));
+            update_hormones(&mut child, day);
+        }
+        assert!(child.health.hp > 0.5, "well-fed high IGF-1 should give a small HP recovery boost, got {}", child.health.hp);
+
+        let mut adult = base_individual("male");
+        adult.birth_day = -30 * 365;
+        adult.health.hp = 0.5;
+        initialize_hormones(&mut adult, 0);
+        adult.hormones.growth_hormone = 1.0;
+        adult.hormones.igf1 = 1.0;
+        for day in 1..=10 {
+            adult.extra.insert("satiation".to_string(), serde_json::json!(0.8));
+            update_hormones(&mut adult, day);
+        }
+        let child_gain = child.health.hp - 0.5;
+        let adult_gain = adult.health.hp - 0.5;
+        assert!(child_gain > adult_gain, "IGF-1's HP recovery feedback should be stronger before adulthood ({child_gain} vs adult {adult_gain})");
+    }
+
+    #[test]
+    fn igf1_gives_no_hp_recovery_boost_while_malnourished() {
+        let mut ind = base_individual("male");
+        ind.health.hp = 0.5;
+        initialize_hormones(&mut ind, 0);
+        ind.hormones.growth_hormone = 1.0;
+        ind.hormones.igf1 = 1.0;
+        for day in 1..=10 {
+            ind.extra.insert("satiation".to_string(), serde_json::json!(0.1));
+            update_hormones(&mut ind, day);
+        }
+        assert!(ind.health.hp <= 0.5, "malnourished individuals shouldn't get an IGF-1 recovery boost, got {}", ind.health.hp);
+    }
+
+    #[test]
+    fn population_hormone_stats_break_down_by_sex_and_age_band() {
+        let mut child = base_individual("female");
+        child.alive = true;
+        child.birth_day = -5 * 365;
+        initialize_hormones(&mut child, 0);
+        let mut adult_female = base_individual("female");
+        adult_female.alive = true;
+        adult_female.birth_day = -25 * 365;
+        initialize_hormones(&mut adult_female, 0);
+        let mut adult_male = base_individual("male");
+        adult_male.alive = true;
+        adult_male.birth_day = -25 * 365;
+        initialize_hormones(&mut adult_male, 0);
+        let mut elder = base_individual("male");
+        elder.alive = true;
+        elder.birth_day = -70 * 365;
+        initialize_hormones(&mut elder, 0);
+        let population = vec![child, adult_female, adult_male, elder];
+
+        let stats = compute_population_hormone_stats(&population, 0);
+        let by_group = stats.get("by_group").expect("by_group breakdown present");
+        for group in ["female", "male", "child", "adult", "elderly"] {
+            assert!(by_group.get(group).is_some(), "missing {group} breakdown");
+        }
+        // Adult male testosterone should sit well above a 5-year-old's (prepubertal).
+        let adult_t = by_group["adult"]["testosterone"].as_f64().unwrap();
+        let child_t = by_group["child"]["testosterone"].as_f64().unwrap();
+        assert!(adult_t > child_t, "adult testosterone ({adult_t}) should exceed a child's ({child_t})");
+        // female/male breakdowns should each only reflect their own sex's estrogen baseline.
+        let female_e = by_group["female"]["estrogen"].as_f64().unwrap();
+        let male_e = by_group["male"]["estrogen"].as_f64().unwrap();
+        assert!(female_e > male_e, "female-group estrogen ({female_e}) should exceed male-group ({male_e})");
+    }
+
+    #[test]
+    fn population_hormone_stats_overall_average_unaffected_by_the_new_breakdown() {
+        let mut a = base_individual("female");
+        a.alive = true;
+        initialize_hormones(&mut a, 0);
+        let mut b = base_individual("male");
+        b.alive = true;
+        initialize_hormones(&mut b, 0);
+        let stats = compute_population_hormone_stats(&[a.clone(), b.clone()], 0);
+        let expected_cortisol = (a.hormones.cortisol + b.hormones.cortisol) / 2.0;
+        assert!((stats["cortisol"].as_f64().unwrap() - expected_cortisol).abs() < 1e-9);
+    }
+
+    #[test]
     fn dehydration_raises_renin_which_cascades_to_aldosterone() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.health.hydration = 0.1;
         for day in 1..=15 {
             update_hormones(&mut ind, day);
@@ -964,12 +1188,12 @@ mod tests {
     #[test]
     fn post_fertile_low_estrogen_females_have_elevated_pth_osteoporosis_risk() {
         let mut young = base_individual("female");
-        initialize_hormones(&mut young);
+        initialize_hormones(&mut young, 0);
         for day in 1..=(30 * 365) {
             update_hormones(&mut young, day);
         }
         let mut elder = base_individual("female");
-        initialize_hormones(&mut elder);
+        initialize_hormones(&mut elder, 0);
         for day in 1..=(65 * 365) {
             update_hormones(&mut elder, day);
         }
@@ -979,13 +1203,13 @@ mod tests {
     #[test]
     fn low_melatonin_from_chronic_stress_feeds_a_small_rise_into_crh() {
         let mut calm = base_individual("male");
-        initialize_hormones(&mut calm);
+        initialize_hormones(&mut calm, 0);
         calm.psychology.stress_level = 0.1;
         for day in 1..=20 {
             update_hormones(&mut calm, day);
         }
         let mut stressed = base_individual("male");
-        initialize_hormones(&mut stressed);
+        initialize_hormones(&mut stressed, 0);
         stressed.psychology.stress_level = 0.1;
         for day in 1..=20 {
             update_hormones(&mut stressed, day);
@@ -1004,7 +1228,7 @@ mod tests {
     #[test]
     fn digestive_hormones_respond_to_the_satiation_swing_at_different_speeds() {
         let mut ind = base_individual("male");
-        initialize_hormones(&mut ind);
+        initialize_hormones(&mut ind, 0);
         ind.extra.insert("satiation".to_string(), serde_json::json!(0.9));
         update_hormones(&mut ind, 1);
         // Gastrin (fast) should have moved much further toward the new
@@ -1017,14 +1241,14 @@ mod tests {
     #[test]
     fn adiponectin_gives_insulin_a_small_sensitizing_discount_when_lean() {
         let mut lean = base_individual("male");
-        initialize_hormones(&mut lean);
+        initialize_hormones(&mut lean, 0);
         for day in 1..=60 {
             lean.extra.insert("satiation".to_string(), serde_json::json!(0.3));
             update_hormones(&mut lean, day);
         }
         let lean_insulin = lean.hormones.insulin;
         let mut heavy = base_individual("male");
-        initialize_hormones(&mut heavy);
+        initialize_hormones(&mut heavy, 0);
         for day in 1..=60 {
             heavy.extra.insert("satiation".to_string(), serde_json::json!(0.9));
             update_hormones(&mut heavy, day);

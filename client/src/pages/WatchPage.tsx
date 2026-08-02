@@ -214,7 +214,7 @@ export default function WatchPage() {
         {([
           { label: text(l, { tr: 'NÜFUS', en: 'POPULATION', de: 'BEVÖLKERUNG', fr: 'POPULATION', ar: 'السكان' }), value: snapshot.population_count, color: '#4f9ef7' },
           { label: text(l, { tr: 'TOPLAM DOĞAN', en: 'TOTAL BORN', de: 'GESAMT GEBOREN', fr: 'NAISSANCES TOTALES', ar: 'إجمالي المواليد' }), value: stats.total_births ?? '—', color: '#22c55e' },
-          { label: text(l, { tr: 'TOPLAM ÖLEN', en: 'TOTAL DIED', de: 'GESAMT GESTORBEN', fr: 'DÉCÈS TOTAUX', ar: 'إجمالي الوفيات' }), value: stats.total_deaths ?? '—', color: '#f97316' },
+          { label: text(l, { tr: 'TOPLAM ÖLEN', en: 'TOTAL DIED', de: 'GESAMT GESTORBEN', fr: 'DÉCÈS TOTAUX', ar: 'إجمالي الوفيات' }), value: stats.deaths ?? '—', color: '#f97316' },
           { label: text(l, { tr: 'GRUP SAYISI', en: 'GROUP COUNT', de: 'GRUPPENANZAHL', fr: 'NOMBRE DE GROUPES', ar: 'عدد المجموعات' }), value: groups.length, color: '#a855f7' },
         ] as { label: string; value: number | string; color: string }[]).map(s => (
           <div key={s.label} style={{

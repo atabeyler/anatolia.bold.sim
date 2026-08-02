@@ -131,7 +131,7 @@ pub fn derive_stats(sim: &SimulationState) -> Value {
     let psych_stats = compute_population_psych_stats(&sim.individuals, gini);
     let happiness_index = psych_stats.get("happiness_index").and_then(Value::as_f64).unwrap_or(0.5);
     let mean_stress = psych_stats.get("mean_stress").and_then(Value::as_f64).unwrap_or(0.0);
-    let mean_hormones = compute_population_hormone_stats(&sim.individuals);
+    let mean_hormones = compute_population_hormone_stats(&sim.individuals, sim.current_day);
 
     let mut mental_state_distribution: HashMap<String, i64> = HashMap::new();
     for ind in &alive {
@@ -167,7 +167,16 @@ pub fn derive_stats(sim: &SimulationState) -> Value {
         .collect();
 
     let births = sim.individuals.iter().filter(|i| !i.is_founder).count();
-    let deaths = sim.individuals.iter().filter(|i| i.is_dead).count();
+    // Matches population_view's/events_summary's own broader dead-filter
+    // (`!alive || is_dead`) rather than `is_dead` alone -- both fields are
+    // meant to always be set together on every death-writing call site, but
+    // both carry #[serde(default)], so an individual JSON payload missing
+    // just `is_dead` (an older checkpoint format, a partially-written
+    // upsert, a stale WASM-local IndexedDB record) would deserialize with
+    // `alive=false`/`is_dead=false` -- counted as deceased everywhere else,
+    // invisible to this stat alone. This used to leave the Population
+    // panel showing a full deceased list against a "0" death count.
+    let deaths = sim.individuals.iter().filter(|i| i.is_dead || !i.alive).count();
     let avg_intelligence = alive.iter().map(|i| i.phenotype.fluid_intelligence).sum::<f64>() / max_n;
     let sick_count = alive.iter().filter(|i| i.health.disease.is_some()).count();
     let sick_rate = sick_count as f64 / max_n;
@@ -687,5 +696,28 @@ mod derive_stats_tests {
         let sim = SimulationState { individuals: vec![ind_with_words(&[])], ..Default::default() };
         let stats = derive_stats(&sim);
         assert_eq!(stats.get("word_count").and_then(Value::as_i64), Some(0));
+    }
+
+    #[test]
+    fn deaths_count_matches_population_view_s_own_deceased_filter() {
+        // Regression: an individual whose payload deserialized with
+        // `alive=false` but `is_dead` still at its serde default (false) --
+        // an older checkpoint format, a partially-written upsert, a stale
+        // WASM-local IndexedDB record predating one of these two fields --
+        // used to be swept into population_view's deceased list (it filters
+        // on `!alive || is_dead`) while derive_stats's own `deaths` counter
+        // (filtering on `is_dead` alone) stayed at 0. The Population panel
+        // showed a full deceased list next to a "0" death count.
+        let sim = SimulationState {
+            individuals: vec![
+                Individual { alive: true, is_dead: false, ..Default::default() },
+                Individual { alive: false, is_dead: true, ..Default::default() },
+                // alive=false but is_dead missing/false -- the exact case that broke.
+                Individual { alive: false, is_dead: false, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let stats = derive_stats(&sim);
+        assert_eq!(stats.get("deaths").and_then(Value::as_i64), Some(2));
     }
 }

@@ -141,6 +141,35 @@ fn locus_average(genome: &crate::types::Genome, locus_id: &str) -> f64 {
     genome.get(locus_id).map(|l| (l.allele1.value.unwrap_or(0.5) + l.allele2.value.unwrap_or(0.5)) / 2.0).unwrap_or(0.5)
 }
 
+/// A bounded multiplier over the base conception odds below, from both
+/// partners' own *current* circulating hormone levels (hormones.rs) rather
+/// than only their static genetic fertility trait -- the same "genetics
+/// sets the baseline, live physiological state modulates it" split
+/// `urge_factor` already models for `mating_urge`. Four real, well-
+/// documented reproductive-hormone effects:
+/// - The female's own LH/estrogen sitting above their cycling resting
+///   baseline (hormones.rs's ovulatory surge) raises odds -- real biology:
+///   conception overwhelmingly happens during the fertile window, not
+///   uniformly across the cycle.
+/// - Elevated cortisol in *either* partner lowers odds (real HPA-axis
+///   suppression of the reproductive axis under chronic stress).
+/// - Elevated female prolactin lowers odds (real lactational-amenorrhea
+///   suppression of ovulation).
+/// - The male's own testosterone/DHEA mildly raise odds (real libido/
+///   spermatogenesis support).
+/// Clamped to a moderate band so it can meaningfully shift the outcome
+/// without ever letting hormones alone force conception to zero or
+/// certainty on their own.
+fn hormone_fertility_factor(female: &Individual, male: &Individual) -> f64 {
+    let fh = &female.hormones;
+    let mh = &male.hormones;
+    let ovulation_boost = 1.0 + (fh.lh - 0.25).max(0.0) * 0.8 + (fh.estrogen - 0.3).max(0.0) * 0.3;
+    let stress_suppression = (1.0 - ((fh.cortisol - 0.5).max(0.0) + (mh.cortisol - 0.5).max(0.0)) * 0.3).max(0.2);
+    let prolactin_suppression = (1.0 - (fh.prolactin - 0.3).max(0.0) * 0.6).max(0.2);
+    let male_drive = 0.9 + mh.testosterone * 0.1 + mh.dhea * 0.05;
+    (ovulation_boost * stress_suppression * prolactin_suppression * male_drive).clamp(0.3, 1.8)
+}
+
 /// `community_lang_stage` is the highest language stage (0-6) any currently
 /// living member of the population has reached -- used here to model
 /// demographic transition: real-world societies with more developed
@@ -182,7 +211,8 @@ fn conception_probability(female: &Individual, male: &Individual, current_day: i
     // community as a whole has reached writing (stage 6) -- a bounded, gradual
     // pull rather than something that can stall population growth on its own.
     let demographic_transition = 1.0 - (community_lang_stage.clamp(0, 6) as f64 / 6.0) * 0.3;
-    ((fertility * age_factor + mhc_bonus - inbreed_penalty * 0.5) * 0.09 * urge_factor * demographic_transition).clamp(0.0, 1.0)
+    let hormone_factor = hormone_fertility_factor(female, male);
+    ((fertility * age_factor + mhc_bonus - inbreed_penalty * 0.5) * 0.09 * urge_factor * demographic_transition * hormone_factor).clamp(0.0, 1.0)
 }
 
 /// A small seasonal nudge to conception odds, gated on the community having
@@ -266,6 +296,22 @@ pub fn update_mating_urge(individual: &mut Individual, world_state: &serde_json:
     }
 
     rate *= 0.65 + individual.phenotype.fertility * 0.7;
+
+    // Live circulating sex hormones (hormones.rs) modulate the genetic
+    // fertility baseline above -- real testosterone/estrogen both drive
+    // libido, sex-typically dominant per hormones::sex_hormone_baselines.
+    rate *= 0.85 + individual.hormones.testosterone * 0.2 + individual.hormones.estrogen * 0.15;
+    // Elevated cortisol (chronic stress response) and prolactin (lactation)
+    // both suppress libido in real reproductive endocrinology -- on top of
+    // (not a replacement for) the existing psychology.stress_level check
+    // below, which reflects perceived/behavioral stress rather than the
+    // circulating hormone itself.
+    if individual.hormones.cortisol > 0.6 {
+        rate *= (1.0 - (individual.hormones.cortisol - 0.6) * 0.5).max(0.3);
+    }
+    if individual.hormones.prolactin > 0.4 {
+        rate *= (1.0 - (individual.hormones.prolactin - 0.4) * 0.6).max(0.3);
+    }
 
     if individual.psychology.stress_level > 0.7 {
         rate *= 0.4;
@@ -616,6 +662,103 @@ mod tests {
         male.group_id = Some("band-1".to_string());
         let groups = vec![serde_json::json!({ "id": "band-1", "norms": ["incest_taboo"] })];
         assert_eq!(kinship_mate_weight(&male, &female, &empty_genealogy(), &groups), 1.0);
+    }
+
+    // ── hormone-driven reproduction wiring ──────────────────────────────
+
+    #[test]
+    fn elevated_female_lh_and_estrogen_raise_conception_probability_ovulation_window() {
+        let mut female = founder_at("female", 0.0);
+        let male = founder_at("male", 0.0);
+        let genealogy = empty_genealogy();
+        female.hormones.lh = 0.25;
+        female.hormones.estrogen = 0.3;
+        let baseline_p = conception_probability(&female, &male, 0, 0, &genealogy);
+        female.hormones.lh = 0.9;
+        female.hormones.estrogen = 0.7;
+        let ovulating_p = conception_probability(&female, &male, 0, 0, &genealogy);
+        assert!(ovulating_p > baseline_p, "an LH/estrogen surge (ovulation) should raise conception odds ({ovulating_p} vs baseline {baseline_p})");
+    }
+
+    #[test]
+    fn elevated_cortisol_in_either_partner_lowers_conception_probability() {
+        let mut female = founder_at("female", 0.0);
+        let mut male = founder_at("male", 0.0);
+        let genealogy = empty_genealogy();
+        female.hormones.cortisol = 0.2;
+        male.hormones.cortisol = 0.2;
+        let calm_p = conception_probability(&female, &male, 0, 0, &genealogy);
+        female.hormones.cortisol = 0.9;
+        male.hormones.cortisol = 0.9;
+        let stressed_p = conception_probability(&female, &male, 0, 0, &genealogy);
+        assert!(stressed_p < calm_p, "high cortisol in both partners should lower conception odds ({stressed_p} vs calm {calm_p})");
+    }
+
+    #[test]
+    fn elevated_female_prolactin_suppresses_conception_probability() {
+        let mut female = founder_at("female", 0.0);
+        let male = founder_at("male", 0.0);
+        let genealogy = empty_genealogy();
+        female.hormones.prolactin = 0.05;
+        let baseline_p = conception_probability(&female, &male, 0, 0, &genealogy);
+        female.hormones.prolactin = 0.9;
+        let lactating_p = conception_probability(&female, &male, 0, 0, &genealogy);
+        assert!(lactating_p < baseline_p, "elevated prolactin (lactational amenorrhea) should suppress conception odds ({lactating_p} vs baseline {baseline_p})");
+    }
+
+    #[test]
+    fn hormone_fertility_factor_stays_within_its_bounded_band() {
+        let mut female = founder_at("female", 0.0);
+        let mut male = founder_at("male", 0.0);
+        female.hormones.lh = 1.0;
+        female.hormones.estrogen = 1.0;
+        female.hormones.cortisol = 0.0;
+        female.hormones.prolactin = 0.0;
+        male.hormones.cortisol = 0.0;
+        male.hormones.testosterone = 1.0;
+        male.hormones.dhea = 1.0;
+        let f = hormone_fertility_factor(&female, &male);
+        assert!((0.3..=1.8).contains(&f), "hormone_fertility_factor left its bounded band: {f}");
+    }
+
+    #[test]
+    fn testosterone_and_estrogen_raise_mating_urge_accumulation_rate() {
+        let mut low = Individual {
+            age_days: Some(25 * 365),
+            health: crate::types::Health { hp: 1.0, calories: 1.0, hydration: 1.0, ..Default::default() },
+            phenotype: crate::types::Phenotype { fertility: 0.5, ..Default::default() },
+            extra: { let mut m = serde_json::Map::new(); m.insert("mating_urge".to_string(), serde_json::json!(0.3)); m },
+            ..Default::default()
+        };
+        low.hormones.testosterone = 0.0;
+        low.hormones.estrogen = 0.0;
+        let mut high = low.clone();
+        high.hormones.testosterone = 1.0;
+        high.hormones.estrogen = 1.0;
+        update_mating_urge(&mut low, &serde_json::json!({}));
+        update_mating_urge(&mut high, &serde_json::json!({}));
+        let low_urge = low.extra["mating_urge"].as_f64().unwrap();
+        let high_urge = high.extra["mating_urge"].as_f64().unwrap();
+        assert!(high_urge > low_urge, "high testosterone/estrogen should build mating urge faster ({high_urge} vs low {low_urge})");
+    }
+
+    #[test]
+    fn high_cortisol_and_prolactin_suppress_mating_urge_accumulation() {
+        let mut calm = Individual {
+            age_days: Some(25 * 365),
+            health: crate::types::Health { hp: 1.0, calories: 1.0, hydration: 1.0, ..Default::default() },
+            phenotype: crate::types::Phenotype { fertility: 0.5, ..Default::default() },
+            extra: { let mut m = serde_json::Map::new(); m.insert("mating_urge".to_string(), serde_json::json!(0.3)); m },
+            ..Default::default()
+        };
+        let mut suppressed = calm.clone();
+        suppressed.hormones.cortisol = 0.95;
+        suppressed.hormones.prolactin = 0.95;
+        update_mating_urge(&mut calm, &serde_json::json!({}));
+        update_mating_urge(&mut suppressed, &serde_json::json!({}));
+        let calm_urge = calm.extra["mating_urge"].as_f64().unwrap();
+        let suppressed_urge = suppressed.extra["mating_urge"].as_f64().unwrap();
+        assert!(suppressed_urge < calm_urge, "high cortisol/prolactin should suppress mating urge accumulation ({suppressed_urge} vs calm {calm_urge})");
     }
 
     #[test]

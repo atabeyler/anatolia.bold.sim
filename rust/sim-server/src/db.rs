@@ -50,19 +50,15 @@ impl AppState {
                 DbBackend::Postgres(Self::connect_postgres(&database_url).await?)
             }
             // RENDER_EXTERNAL_URL is only ever set by Render itself (see
-            // spawn_self_ping in main.rs); FLY_APP_NAME is the equivalent
-            // always-set signal on a Fly.io machine (see fly.toml/Dockerfile,
-            // kept in the repo alongside this Render blueprint in case that
-            // deployment path is ever used again). Either one is a reliable
-            // signal that this process is a real browser-facing web deploy,
-            // not the desktop sidecar or a local dev run. The browser client
-            // must never end up talking to a throwaway SQLite database
-            // (accounts now only exist in Postgres, see
-            // auth::is_local_backend), so treat a missing DATABASE_URL here
-            // the same as an unreachable one: a loud startup failure instead
-            // of a silently empty fallback DB.
-            _ if std::env::var("RENDER_EXTERNAL_URL").is_ok() || std::env::var("FLY_APP_NAME").is_ok() => {
-                panic!("DATABASE_URL is required on the web deploy (RENDER_EXTERNAL_URL or FLY_APP_NAME is set) -- refusing to fall back to a throwaway SQLite database");
+            // spawn_self_ping in main.rs) -- a reliable signal that this
+            // process is a real browser-facing web deploy, not the desktop
+            // sidecar or a local dev run. The browser client must never end
+            // up talking to a throwaway SQLite database (accounts now only
+            // exist in Postgres, see auth::is_local_backend), so treat a
+            // missing DATABASE_URL here the same as an unreachable one: a
+            // loud startup failure instead of a silently empty fallback DB.
+            _ if std::env::var("RENDER_EXTERNAL_URL").is_ok() => {
+                panic!("DATABASE_URL is required on the web deploy (RENDER_EXTERNAL_URL is set) -- refusing to fall back to a throwaway SQLite database");
             }
             _ => Self::sqlite_backend().await?,
         };
@@ -912,9 +908,8 @@ pub async fn migrate(backend: &DbBackend) -> Result<(), sqlx::Error> {
 
 // A simulation's tick loop lives only in this process's in-memory
 // RuntimeManager (runtime.rs) -- it has no persistent record of which
-// simulations it was ticking before a restart. Every deploy (or crash) on
-// a Fly.io machine restart kills that loop without ever getting a chance to
-// touch the DB, so
+// simulations it was ticking before a restart. Every deploy (or crash)
+// kills that loop without ever getting a chance to touch the DB, so
 // a fresh boot otherwise inherits rows stuck reading "running" with nothing
 // actually advancing them: the dashboard's "Canlı İzle" list keeps listing
 // them as live, watching one 404s since no session exists for it, and the

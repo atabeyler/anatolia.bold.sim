@@ -1,7 +1,20 @@
+import { useState } from 'react';
 import DetailPanel from './DetailPanel';
 import { useSimStore } from '../../store/simStore';
 import { text, type LangCode } from '../../utils/i18n';
 import { HORMONE_GROUPS } from '../../utils/hormoneGroups';
+
+// hormones::compute_population_hormone_stats's own by_group breakdown keys
+// (sex + age band, alongside the overall population average) -- see
+// AGENTS.md's Hormones section.
+const HORMONE_BREAKDOWN_GROUPS: { key: 'overall' | 'female' | 'male' | 'child' | 'adult' | 'elderly'; label: Record<LangCode, string> }[] = [
+  { key: 'overall', label: { tr: 'Genel', en: 'Overall', de: 'Gesamt', fr: 'Ensemble', ar: 'الإجمالي' } },
+  { key: 'female',  label: { tr: 'Kadın',  en: 'Female',  de: 'Weiblich', fr: 'Femme',    ar: 'إناث' } },
+  { key: 'male',    label: { tr: 'Erkek',  en: 'Male',    de: 'Männlich', fr: 'Homme',    ar: 'ذكور' } },
+  { key: 'child',   label: { tr: 'Çocuk',  en: 'Child',   de: 'Kind',     fr: 'Enfant',   ar: 'أطفال' } },
+  { key: 'adult',   label: { tr: 'Yetişkin', en: 'Adult', de: 'Erwachsen', fr: 'Adulte',  ar: 'بالغون' } },
+  { key: 'elderly', label: { tr: 'Yaşlı',  en: 'Elderly', de: 'Älter',    fr: 'Âgé',      ar: 'كبار السن' } },
+];
 
 const MENTAL_STATES: Record<string, { emoji: string; color: string; tr: string; de: string; fr: string; ar: string }> = {
   content:   { emoji: '😌', color: 'text-green-400',  tr: 'Memnun',    de: 'Zufrieden',  fr: 'Content',     ar: 'مرتاح' },
@@ -47,8 +60,13 @@ export default function PsychologyPanel() {
   // Population-average dynamic hormone levels (hormones::compute_population_hormone_stats,
   // see AGENTS.md's Hormones section) -- distinct from the static genetic
   // traits above (oxytocin_sensitivity, stress_reactivity, ...): these rise
-  // and fall tick by tick with real per-individual state.
-  const meanHormones: Record<string, number> = s?.mean_hormones ?? {};
+  // and fall tick by tick with real per-individual state. `by_group` breaks
+  // the same average down by sex/age band -- a flat population mean hides
+  // real physiological differences (e.g. children carrying near-zero sex
+  // hormones vs. adults, or elders' declining testosterone/estrogen).
+  const [hormoneBreakdown, setHormoneBreakdown] = useState<'overall' | 'female' | 'male' | 'child' | 'adult' | 'elderly'>('overall');
+  const allMeanHormones: Record<string, any> = s?.mean_hormones ?? {};
+  const meanHormones: Record<string, number> = hormoneBreakdown === 'overall' ? allMeanHormones : (allMeanHormones.by_group?.[hormoneBreakdown] ?? {});
 
   const tom = TOM_LABELS[tomStage] ?? TOM_LABELS[0];
 
@@ -164,6 +182,19 @@ export default function PsychologyPanel() {
         <h4 className="text-sim-gold text-xs font-semibold uppercase tracking-widest mb-2">
           {text(lang as LangCode, { tr: 'Hormonal Sistem (Nüfus Ort.)', en: 'Hormonal System (Pop. Avg.)', de: 'Hormonsystem (Bev.-Durchschn.)', fr: 'Système hormonal (moy. pop.)', ar: 'الجهاز الهرموني (متوسط السكان)' })}
         </h4>
+        <div className="flex flex-wrap gap-1 mb-2">
+          {HORMONE_BREAKDOWN_GROUPS.map(g => (
+            <button
+              key={g.key}
+              onClick={() => setHormoneBreakdown(g.key)}
+              className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                hormoneBreakdown === g.key ? 'bg-sim-gold/20 border-sim-gold text-sim-gold' : 'border-sim-border text-sim-muted hover:text-sim-text'
+              }`}
+            >
+              {text(lang as LangCode, g.label)}
+            </button>
+          ))}
+        </div>
         <div className="space-y-3">
           {HORMONE_GROUPS.map(group => (
             <div key={group.title.en}>
