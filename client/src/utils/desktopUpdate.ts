@@ -45,6 +45,22 @@ export async function returnToDesktopChooser(): Promise<void> {
     // Cloud was chosen (nothing running to stop) or the command is
     // otherwise unavailable -- either way, still proceed to relaunch.
   }
-  const { relaunch } = await import('@tauri-apps/api/process');
-  await relaunch();
+  try {
+    const { relaunch } = await import('@tauri-apps/api/process');
+    await relaunch();
+  } catch (err) {
+    // relaunch() used to be called outside any try/catch here -- a failure
+    // (missing allowlist permission, a bundling issue with the dynamic
+    // import, anything) threw an unhandled rejection with zero visible
+    // feedback, which is exactly what "the button doesn't respond" looks
+    // like from the user's side: the click handler ran, did nothing
+    // observable, and the error only ever existed in a devtools console the
+    // packaged app doesn't show by default. Log loudly and fall back to a
+    // same-window reload so the click is never a silent dead end, even
+    // though a plain reload lands back on this same local server rather
+    // than the actual dist-chooser (the only true fix for that is
+    // relaunch() succeeding).
+    console.error('[returnToDesktopChooser] relaunch() failed, falling back to reload:', err);
+    window.location.reload();
+  }
 }
