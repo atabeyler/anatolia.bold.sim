@@ -32,7 +32,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 pub async fn list_users(State(state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
-    if !require_admin(&headers) {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     match load_users(&state.backend).await {
@@ -68,7 +68,7 @@ pub async fn approve_user(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    if !require_admin(&headers) {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     match update_user_flag(&state.backend, &id, Some(true), Some(false), None, Some("user")).await {
@@ -92,7 +92,7 @@ pub async fn reject_user(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    if !require_admin(&headers) {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     let user = load_user_by_id(&state.backend, &id).await.ok().flatten();
@@ -114,7 +114,7 @@ pub async fn ban_user(
     headers: axum::http::HeaderMap,
     Json(payload): Json<BanPayload>,
 ) -> impl IntoResponse {
-    if !require_admin(&headers) {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     match update_user_flag(&state.backend, &id, None, Some(true), payload.reason.as_deref(), None).await {
@@ -129,7 +129,7 @@ pub async fn unban_user(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    if !require_admin(&headers) {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     match update_user_flag(&state.backend, &id, None, Some(false), None, None).await {
@@ -144,7 +144,7 @@ pub async fn delete_user_route(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    if !require_admin(&headers) {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     match delete_user(&state.backend, &id).await {
@@ -205,7 +205,7 @@ pub async fn seed_admin(State(state): State<AppState>, headers: axum::http::Head
 }
 
 pub async fn cleanup_admin(State(state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
-    if !require_admin(&headers) {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     match cleanup_simulation_data(&state.backend).await {
@@ -221,8 +221,8 @@ pub async fn cleanup_admin(State(state): State<AppState>, headers: axum::http::H
     }
 }
 
-pub async fn test_email(State(_state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
-    if !require_admin(&headers) {
+pub async fn test_email(State(state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !require_admin(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
     }
     crate::email::send_test_email().await;

@@ -239,8 +239,17 @@ pub fn auth_user_from_headers(headers: &axum::http::HeaderMap) -> Option<Claims>
     decode_access_token(&bearer_token(headers)?)
 }
 
-pub fn require_admin(headers: &axum::http::HeaderMap) -> bool {
-    auth_user_from_headers(headers).map(|u| u.role == "admin").unwrap_or(false)
+/// Must go through `authenticate` (which knows how to borrow identity from
+/// the cloud when running as the local/SQLite backend, see that function's
+/// own doc comment), not `auth_user_from_headers`/`decode_access_token`
+/// directly -- those only ever decode with *this process's own* local
+/// secret, which is never the one a desktop/Android "Yerel" session's
+/// bearer token was actually signed with (that token came from a real
+/// cloud login). Using the local-only decode here silently failed every
+/// admin check under Yerel mode -- `/api/admin/users` and friends always
+/// came back 403/"failed to load", even for a genuine cloud admin account.
+pub async fn require_admin(state: &AppState, headers: &axum::http::HeaderMap) -> bool {
+    authenticate(state, headers).await.map(|u| u.role == "admin").unwrap_or(false)
 }
 
 #[derive(Debug, Deserialize)]
