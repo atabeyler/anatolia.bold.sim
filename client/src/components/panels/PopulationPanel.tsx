@@ -4,6 +4,7 @@ import { useSimStore } from '../../store/simStore';
 import DetailPanel from './DetailPanel';
 import { Users, MapPin, ChevronRight, X, ChevronDown } from 'lucide-react';
 import { text, type LangCode, translateEventDescription, translateStageName, translateMentalState } from '../../utils/i18n';
+import { HORMONE_GROUPS } from '../../utils/hormoneGroups';
 
 const CAUSE_I18N: Record<string, { tr: string; en: string; de: string; fr: string; ar: string }> = {
   starvation:                  { tr: 'Açlık',                    en: 'Starvation',             de: 'Verhungern',              fr: 'Famine',                      ar: 'مجاعة'             },
@@ -281,6 +282,7 @@ function IndividualDetail({ ind, allIndividuals, onClose }: { ind: any; allIndiv
   const health = ind.health ?? {};
   const mind = ind.mind ?? {};
   const lang_ = ind.language ?? {};
+  const horm = ind.hormones ?? {};
   const isDead = ind.alive === false || ind.is_dead;
   const isFounder = ind.is_founder || (!ind.parent_1_id && !ind.parent_2_id);
   const tr = makeTr(lang as LangCode);
@@ -289,6 +291,7 @@ function IndividualDetail({ ind, allIndividuals, onClose }: { ind: any; allIndiv
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [treeOpen, setTreeOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [hormonesExpanded, setHormonesExpanded] = useState(false);
 
   const TYPE_ICON: Record<string, string> = {
     birth: '✦', death: '†', language: '◆', technology: '⚙',
@@ -555,6 +558,40 @@ function IndividualDetail({ ind, allIndividuals, onClose }: { ind: any; allIndiv
                   <StatRow label={tr('Hamilelik Günü', 'Pregnancy Day')} value={health.pregnancy_day ?? '—'} color="#ff8ab0" />
                 )}
               </div>
+            </div>
+          )}
+
+          {/* -- Hormonlar / Hormones -- this individual's own live 49-hormone
+               state (rust/sim-core/src/hormones.rs), not a population average --
+               see AGENTS.md's Hormones section. Collapsed by default: dense at
+               49 items, expand to verify a specific mechanism (e.g. pregnancy
+               raising estrogen/progesterone, low HP spiking adrenaline). */}
+          {!isDead && (
+            <div>
+              <button
+                onClick={() => setHormonesExpanded(v => !v)}
+                className="flex items-center justify-between w-full"
+                style={{ marginBottom: hormonesExpanded ? 6 : 0 }}
+              >
+                <SectionHeader label={tr('HORMONLAR', 'HORMONES')} />
+                <ChevronDown size={12} style={{ color: '#6a8878', transform: hormonesExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+              </button>
+              {hormonesExpanded && (
+                <div className="space-y-3">
+                  {HORMONE_GROUPS.map(group => (
+                    <div key={group.title.en}>
+                      <div className="text-sim-muted uppercase tracking-wide opacity-70" style={{ fontSize: 10, marginBottom: 3 }}>
+                        {text(lang as LangCode, group.title)}
+                      </div>
+                      <div className="space-y-1.5">
+                        {group.items.map(({ key, label }) => (
+                          <TraitRow key={key} label={text(lang as LangCode, label)} value={horm[key] ?? 0} color="#c8b4ff" />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

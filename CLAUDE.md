@@ -441,7 +441,13 @@ same cardinal-rule spirit the rest of this module upholds.
 shape/rounding convention as `psychology::compute_population_psych_stats`'s
 `mean_stress`), surfaced in `PsychologyPanel`'s "Hormonal System" section.
 `client_view::serialize_individual` includes the full per-individual
-`hormones` object.
+`hormones` object, rendered as a collapsible per-axis breakdown in
+`PopulationPanel`'s individual detail view (`client/src/utils/hormoneGroups.ts`
+is the single shared grouping/label/color source both panels draw from) --
+this is a specific individual's own live values, not a population average,
+so it's the place to actually verify a mechanism in the running app (e.g.
+select a pregnant female and watch estrogen/progesterone sit elevated, or a
+starving individual and watch ghrelin/ACTH/cortisol rise).
 
 ## FOXP2 Expression
 
