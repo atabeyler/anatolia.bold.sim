@@ -530,7 +530,7 @@ pub fn update_hormones(individual: &mut Individual, current_day: i32) {
     // uses. `cycle_day` is tracked in `extra["_cycle_day"]`, the same pattern
     // `satiation`/`_waterFear` already use for volatile per-individual state.
     let pregnant = individual.health.pregnancy.is_some();
-    let cycling = sex == "female" && age_years >= 15.0 && age_years < 50.0 && !pregnant;
+    let cycling = sex == "female" && (15.0..50.0).contains(&age_years) && !pregnant;
     let cycle_day: i64 = if cycling {
         let prev = individual.extra.get("_cycle_day").and_then(Value::as_i64).unwrap_or(0);
         let next = (prev + 1) % CYCLE_LENGTH_DAYS;

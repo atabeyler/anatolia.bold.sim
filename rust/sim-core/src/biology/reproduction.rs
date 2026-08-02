@@ -157,6 +157,7 @@ fn locus_average(genome: &crate::types::Genome, locus_id: &str) -> f64 {
 ///   suppression of ovulation).
 /// - The male's own testosterone/DHEA mildly raise odds (real libido/
 ///   spermatogenesis support).
+///
 /// Clamped to a moderate band so it can meaningfully shift the outcome
 /// without ever letting hormones alone force conception to zero or
 /// certainty on their own.
