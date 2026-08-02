@@ -696,9 +696,8 @@ async fn runtime_loop(
         // default) for the entire batch. As tick cost grows with population, a
         // batch of up to 100 days can take seconds, during which every other
         // request scheduled on that thread -- including /api/health -- misses
-        // the health-check window (fly.toml's http_service.checks: 5s timeout)
-        // and the machine gets killed and restarted. spawn_blocking moves the
-        // computation onto tokio's separate
+        // Render's 5s health-check window and the instance gets killed and
+        // restarted. spawn_blocking moves the computation onto tokio's separate
         // blocking-thread-pool, so the async worker threads stay free to serve
         // HTTP requests no matter how long a batch takes.
         let stop_for_compute = Arc::clone(&stop);

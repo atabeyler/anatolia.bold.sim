@@ -54,7 +54,7 @@
       "csp": null,
       "dangerousRemoteDomainIpcAccess": [
         {
-          "domain": "anatolia-bold-sim.fly.dev",
+          "domain": "anatolia-sim.onrender.com",
           "windows": ["main"],
           "enableTauriAPI": true
         },
@@ -69,7 +69,7 @@
       "active": true,
       "dialog": false,
       "endpoints": [
-        "https://anatolia-bold-sim.fly.dev/api/updates/desktop/latest.json"
+        "https://anatolia-sim.onrender.com/api/updates/desktop/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERDODZDOEU0RDQ4Qzg5OApSV1NZeUVoTmpteklEYXUyU1FlZEJaYXcxajhBbDB1Q0hXYzliU3VDWVlUN2F6UGxuS3Foa0FCWQo="
     }

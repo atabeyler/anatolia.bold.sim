@@ -5,7 +5,7 @@
 // cross-device simulation-listing calls must be aimed at the cloud
 // explicitly; when the page is already being served by the cloud, a
 // relative path already resolves there.
-export const CLOUD_API_URL = 'https://anatolia-bold-sim.fly.dev';
+export const CLOUD_API_URL = 'https://anatolia-sim.onrender.com';
 
 export function isLocalOrigin(): boolean {
   if (typeof window === 'undefined') return false;
