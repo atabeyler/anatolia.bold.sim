@@ -445,12 +445,23 @@ starving individual and watch ghrelin/ACTH/cortisol rise).
 `routes::get_report` (and its WASM-Local mirror, `report.ts`) also carries
 hormone data into the generated report: each individual's biography entry
 includes their full `hormones` object, and `population_history` carries
-each checkpoint's `mean_hormones` trend (already present in every
-checkpoint's own stored `stats` blob, so this needed no new data, only
-exposing it) -- `ReportPanel`'s new "Hormonal System (Pop. Avg.)" section
-renders a representative per-axis subset (the full 49-hormone breakdown
-stays in the live PsychologyPanel/PopulationPanel; a printed/exported
-report stays a summary).
+each checkpoint's `mean_hormones` trend, `by_group` breakdown included
+(already present in every checkpoint's own stored `stats` blob, so this
+needed no new data, only exposing it). `ReportPanel`'s "Hormonal System
+(Pop. Avg.)" section shows a quick-glance 8-hormone card row up top, then
+the full 49-hormone breakdown as a table underneath -- one row per hormone
+(grouped by axis, same `hormoneGroups.ts` grouping/labels
+`PsychologyPanel`/`PopulationPanel` already share), with Overall plus
+female/male/child/adult/elderly columns, mirroring `PsychologyPanel`'s own
+breakdown chips. Not per-individual, though: each individual's own
+`hormones` object rides along in the report's underlying JSON (biography
+data, available via `/export`) but isn't rendered as a table in
+`ReportPanel` itself -- the Individuals table can already reach the
+thousands of rows on a long-running simulation (see
+`INDIVIDUALS_BATCH_SIZE`'s own doc comment), and 49 additional columns per
+row there would make it unusable both on screen and once
+rasterized/paginated into a PDF; that per-individual detail is what the
+live Population panel's own individual-detail hormone breakdown is for.
 
 ## FOXP2 Expression
 
