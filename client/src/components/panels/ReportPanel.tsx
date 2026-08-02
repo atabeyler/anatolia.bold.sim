@@ -438,6 +438,27 @@ ${secColor(rt('Anlık Durum','Current Snapshot'), '#6366f1', '📊')}
   ${statCard(rt('Zeka','Intelligence'), pct(S.avg_intelligence), '#3b82f6')}
   ${statCard('QoL', String(S.qol_index ?? '—'), '#06b6d4')}
 </div>
+
+<!-- HORMONAL SİSTEM -->
+${secColor(rt('Hormonal Sistem (Nüfus Ort.)','Hormonal System (Pop. Avg.)'), '#ec4899', '🧬')}
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+  ${(() => {
+    const H = (S.mean_hormones ?? {}) as Record<string, number>;
+    // A representative subset, one per axis (see AGENTS.md's Hormones
+    // section) -- the full 49-hormone breakdown is in PsychologyPanel/
+    // PopulationPanel in the live app; a printed report stays a summary.
+    return [
+      [rt('Kortizol','Cortisol'), H.cortisol, '#ef4444'],
+      [rt('Adrenalin','Adrenaline'), H.adrenaline, '#f97316'],
+      [rt('Testosteron','Testosterone'), H.testosterone, '#3b82f6'],
+      [rt('Östrojen','Estrogen'), H.estrogen, '#ec4899'],
+      [rt('Tiroid','Thyroid'), H.thyroid, '#06b6d4'],
+      [rt('Dopamin','Dopamine'), H.dopamine, '#eab308'],
+      [rt('Oksitosin','Oxytocin'), H.oxytocin, '#22c55e'],
+      [rt('İnsülin','Insulin'), H.insulin, '#84cc16'],
+    ].map(([label, value, color]) => statCard(label as string, pct(value as number), color as string)).join('');
+  })()}
+</div>
 ${styledTbl(
   [rt('Gösterge','Metric'), rt('Değer','Value'), rt('Gösterge','Metric'), rt('Değer','Value')],
   (() => {

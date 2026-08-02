@@ -1048,6 +1048,13 @@ async fn get_report(State(state): State<AppState>, Path(id): Path<String>, heade
                 "role": ind.extra.get("group_role").cloned().unwrap_or(Value::Null),
                 "relationships": relationships,
                 "inner_thought_log": ind.mind.extra.get("inner_thought_log").cloned().unwrap_or_else(|| json!([])),
+                // This individual's own live hormone state (see AGENTS.md's
+                // Hormones section) -- same object serialize_individual
+                // already sends for the live Population panel, included here
+                // too so a generated report's biography can reference it
+                // (e.g. "died of birth complications while estrogen/
+                // progesterone were still pregnancy-elevated").
+                "hormones": ind.hormones,
             })
         })
         .collect();
@@ -1081,6 +1088,7 @@ async fn get_report(State(state): State<AppState>, Path(id): Path<String>, heade
                 "max_language_stage": cp.stats.get("max_language_stage").cloned(),
                 "avg_consciousness": cp.stats.get("avg_consciousness").cloned(),
                 "qol_index": cp.stats.get("qol_index").cloned(),
+                "mean_hormones": cp.stats.get("mean_hormones").cloned(),
                 // Each checkpoint's own stats blob already carries this (see
                 // derive_stats), letting GeneticDiversityPanel plot a real
                 // trend across the population's history instead of only
