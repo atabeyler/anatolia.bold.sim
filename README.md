@@ -193,7 +193,7 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 
 | Panel | Shows |
 |---|---|
-| Population | Individual roster — alive/dead filter, sort, per-person compare |
+| Population | Individual roster — alive/dead filter, sort, per-person compare, per-individual live hormone breakdown |
 | Population Pyramid | Age pyramid, sex ratio, age-group breakdown |
 | Biology | Genome/gene expression, individual genetics, life stages |
 | Language | Stage, phonology, vocabulary, per-group dialect comparison table |
