@@ -110,7 +110,12 @@ pub fn process_microbiome_tick(population: &mut [crate::state::Individual], worl
                 // could still wipe out a founder despite them being
                 // deliberately shielded from every other cause.
                 let founder_factor = if individual.is_founder { 0.5 } else { 1.0 };
-                let daily_mortality = base_mortality * (1.0 - total_immunity) * (1.0 - hp * 0.3) * founder_factor / *duration_days as f64;
+                // Interferon (see hormones.rs) rises with this same active
+                // infection and reflects the real antiviral response -- a
+                // small, bounded discount on top of the existing immunity/hp
+                // terms, not a replacement for them.
+                let interferon_factor = 1.0 - (individual.hormones.interferon - 0.3).max(0.0) * 0.2;
+                let daily_mortality = base_mortality * (1.0 - total_immunity) * (1.0 - hp * 0.3) * founder_factor * interferon_factor / *duration_days as f64;
                 if rand::random::<f64>() < daily_mortality {
                     newly_dead = true;
                 }

@@ -87,12 +87,37 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
     }
     if health.hydration < 0.1 {
         base_risk *= if is_founder { 5.0 } else { 10.0 };
+        // Elevated aldosterone (see hormones.rs) reflects the real renin-
+        // angiotensin-aldosterone water/salt-retention response to low blood
+        // volume -- a small, bounded discount on top of the severe base
+        // multiplier above, the same "real hormonal adaptation partially
+        // offsets a crisis" pattern as glucagon's own starvation discount
+        // below.
+        if individual.hormones.aldosterone > 0.5 {
+            base_risk *= 1.0 - (individual.hormones.aldosterone - 0.5) * 0.15;
+        }
+    }
+    // Erythropoietin (see hormones.rs) rises with low HP (a blood-loss/
+    // anemia proxy) and reflects the real red-cell-production recovery
+    // response -- a small, bounded discount once meaningfully elevated.
+    if individual.hormones.epo > 0.6 {
+        base_risk *= 1.0 - (individual.hormones.epo - 0.6) * 0.1;
     }
 
     base_risk *= 1.0 - phenotype.immune_strength * 0.3;
 
     let resilience = (phenotype.stress_resilience + phenotype.health_resilience) / 2.0;
     base_risk *= 1.0 - (resilience - 0.5) * 0.25;
+
+    // Elevated PTH in a post-fertile female (see hormones.rs -- the real
+    // estrogen-decline-driven bone-loss/osteoporosis pathway) carries a
+    // small, bounded fracture-adjacent mortality risk, matching real elderly
+    // osteoporotic-fracture epidemiology. Age-gated the same way the
+    // senescence curve itself is (45y+), so it only ever applies where the
+    // underlying PTH elevation is actually possible.
+    if individual.sex == "female" && age >= 45.0 && individual.hormones.pth > 0.5 {
+        base_risk += (individual.hormones.pth - 0.5) * 0.00004;
+    }
 
     // Predator risk is applied as a single term: a founder-scaled base
     // contribution, modulated by toughness (a tougher individual cuts their
