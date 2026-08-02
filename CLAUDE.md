@@ -449,6 +449,16 @@ so it's the place to actually verify a mechanism in the running app (e.g.
 select a pregnant female and watch estrogen/progesterone sit elevated, or a
 starving individual and watch ghrelin/ACTH/cortisol rise).
 
+`routes::get_report` (and its WASM-Local mirror, `report.ts`) also carries
+hormone data into the generated report: each individual's biography entry
+includes their full `hormones` object, and `population_history` carries
+each checkpoint's `mean_hormones` trend (already present in every
+checkpoint's own stored `stats` blob, so this needed no new data, only
+exposing it) -- `ReportPanel`'s new "Hormonal System (Pop. Avg.)" section
+renders a representative per-axis subset (the full 49-hormone breakdown
+stays in the live PsychologyPanel/PopulationPanel; a printed/exported
+report stays a summary).
+
 ## FOXP2 Expression
 
 - Newborns: `language_capacity * 0.1`

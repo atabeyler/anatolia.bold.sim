@@ -151,6 +151,9 @@ export async function buildReport(state: AnyRecord, checkpoints: StoredCheckpoin
       role: extra.group_role ?? null,
       relationships,
       inner_thought_log: mindExtra.inner_thought_log ?? [],
+      // Mirrors routes.rs's own get_report addition -- this individual's own
+      // live hormone state (see AGENTS.md's Hormones section).
+      hormones: ind.hormones ?? {},
     };
   });
 
