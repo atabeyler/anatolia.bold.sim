@@ -335,6 +335,33 @@ fn sex_hormone_default() -> f64 {
 fn oxytocin_default() -> f64 {
     0.15
 }
+fn tsh_default() -> f64 {
+    0.5
+}
+fn thyroid_default() -> f64 {
+    0.5
+}
+fn insulin_default() -> f64 {
+    0.4
+}
+fn glucagon_default() -> f64 {
+    0.3
+}
+fn leptin_default() -> f64 {
+    0.3
+}
+fn ghrelin_default() -> f64 {
+    0.4
+}
+fn growth_hormone_default() -> f64 {
+    0.3
+}
+fn dhea_default() -> f64 {
+    0.2
+}
+fn norepinephrine_default() -> f64 {
+    0.1
+}
 
 /// Dynamic, tick-by-tick circulating hormone levels -- distinct from the
 /// static genome-derived phenotype traits (`oxytocin_sensitivity`,
@@ -375,6 +402,82 @@ pub struct Hormones {
     /// by. Rises with group presence and surges on mating.
     #[serde(default = "oxytocin_default")]
     pub oxytocin: f64,
+    /// Adrenocorticotropic hormone -- the pituitary signal upstream of
+    /// cortisol in the real HPA axis. Tracks `stress_level` directly and
+    /// faster than cortisol; cortisol's own target is now driven by this
+    /// (not stress_level directly), a genuine two-stage cascade.
+    #[serde(default = "cortisol_default")]
+    pub acth: f64,
+    /// Thyroid-stimulating hormone -- rises under real negative feedback
+    /// when `thyroid` runs low (the actual HPT-axis feedback loop), driving
+    /// it back up the following tick.
+    #[serde(default = "tsh_default")]
+    pub tsh: f64,
+    /// Luteinizing hormone -- the gonadotropin pulse upstream of
+    /// testosterone/estrogen production. Follows the same puberty ramp,
+    /// with a same-tick surge on mating (the actual physiological trigger
+    /// for a mating-linked sex-hormone surge, not the sex hormones
+    /// themselves).
+    #[serde(default = "sex_hormone_default")]
+    pub lh: f64,
+    /// Combined T3/T4 thyroid hormone -- drives basal metabolic tempo.
+    /// Falls under sustained undernourishment (real "sick euthyroid"
+    /// energy-conservation adaptation), rises under TSH stimulation.
+    #[serde(default = "thyroid_default")]
+    pub thyroid: f64,
+    /// Rises with a well-fed satiation swing (glucose uptake/storage
+    /// signal); the fast-acting complement to `glucagon`.
+    #[serde(default = "insulin_default")]
+    pub insulin: f64,
+    /// Rises when hungry (energy-mobilization signal); the fast-acting
+    /// complement to `insulin`. Sustained elevation reflects a genuine
+    /// starvation-adaptation response -- see its bounded mortality-risk
+    /// discount in `mortality.rs`.
+    #[serde(default = "glucagon_default")]
+    pub glucagon: f64,
+    /// Slow-moving (weeks-scale) average of nutritional state -- a real
+    /// long-term energy-reserve signal, distinct from insulin's fast
+    /// same-tick response.
+    #[serde(default = "leptin_default")]
+    pub leptin: f64,
+    /// Fast-moving acute hunger signal -- the inverse-and-quicker
+    /// complement to leptin's slow trend.
+    #[serde(default = "ghrelin_default")]
+    pub ghrelin: f64,
+    /// Growth hormone -- high through childhood/adolescence, declining in
+    /// adulthood. Exposed for now with no direct feedback hook (see
+    /// hormones.rs's own doc comment on why a real growth-curve hook is
+    /// deferred).
+    #[serde(default = "growth_hormone_default")]
+    pub growth_hormone: f64,
+    /// Adrenal androgen precursor -- peaks in young adulthood, declines
+    /// with age in both sexes ("adrenopause"), independently of the
+    /// sex-specific senescence curve. A shared secondary modulator on both
+    /// testosterone and estrogen's own age-driven baseline.
+    #[serde(default = "dhea_default")]
+    pub dhea: f64,
+    /// Surges after giving birth (lactation), decays slowly over
+    /// subsequent ticks. See `apply_birth_surge`.
+    #[serde(default = "adrenaline_default")]
+    pub prolactin: f64,
+    /// Pairs with estrogen but with its own, pregnancy-specific dynamic
+    /// (luteal-phase pregnancy maintenance) rather than tracking the same
+    /// puberty/senescence curve.
+    #[serde(default = "sex_hormone_default")]
+    pub progesterone: f64,
+    /// Sustained (weeks-scale) vigilance/arousal tone -- slower than
+    /// adrenaline's acute spike, faster than cortisol's own return to
+    /// baseline. Sets adrenaline's own resting floor (the real locus
+    /// coeruleus -> adrenal coupling).
+    #[serde(default = "norepinephrine_default")]
+    pub norepinephrine: f64,
+    /// Approximated from `parental_care`/`cooperation` (both partly
+    /// AVPR1A_01-driven already, see genome.rs) since raw locus values
+    /// aren't exposed through the phenotype API. Oxytocin's male-leaning
+    /// counterpart in real bonding/mate-guarding physiology -- see its
+    /// extra weight in `psychology::process_bonding` for males.
+    #[serde(default = "oxytocin_default")]
+    pub vasopressin: f64,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

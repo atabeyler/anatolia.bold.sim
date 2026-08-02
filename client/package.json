@@ -1,6 +1,6 @@
 {
   "name": "anatolia-sim-client",
-  "version": "2.5.28",
+  "version": "2.5.29",
   "type": "module",
   "scripts": {
     "dev": "vite",

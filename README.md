@@ -29,7 +29,7 @@ The simulation runs 19 concurrent engines per tick (1 tick = 1 simulation day):
 | **Language** | FOXP2 expression growth, 7-stage emergence, organic vocabulary |
 | **Consciousness** | Genetics × language × social context, gated by potential |
 | **Psychology** | Wellbeing, stress, theory of mind (0–3), grief, attachment |
-| **Hormones** | Dynamic cortisol/adrenaline/testosterone/estrogen/dopamine/oxytocin, puberty and senescence curves |
+| **Hormones** | 20 dynamic hormones across the real HPA/HPT/HPG endocrine axes, puberty and senescence curves |
 | **Agent Behavior / Movement** | Need-driven action selection, land-gated pathfinding, group cohesion |
 | **Technology** | Cumulative discovery, 25 techs across 5 tiers (0–4) |
 | **Belief** | Proto-beliefs escalating through 6 opaque complexity tiers, named only by the population's own emergent language |
@@ -73,7 +73,7 @@ QoL = consciousness×0.3 + (lang_stage/6)×0.2 + health×0.3 + wellbeing×0.2
 ```
 
 ### Dynamic Hormones
-Distinct from static genetic traits, `hormones.rs` tracks an actual circulating level per hormone that rises and falls tick by tick: cortisol tracks real stress, adrenaline spikes on acute danger (critical HP) and clears fast, testosterone/estrogen follow a real puberty ramp and senescence decline (andropause/menopause) modulated by dominance/fertility genetics and pregnancy, dopamine responds to same-tick nutritional reward, and oxytocin rises with group presence and surges on mating — feeding back (small, bounded terms) into mortality risk (chronic cortisol) and pair-bond strength (dynamic oxytocin).
+Distinct from static genetic traits, `hormones.rs` tracks an actual circulating level per hormone that rises and falls tick by tick — 20 in total, organized as a real cascade around the HPA (stress: ACTH → cortisol, norepinephrine → adrenaline), HPT (metabolic tempo: TSH ↔ thyroid negative feedback), and HPG (reproductive: LH + DHEA → testosterone/estrogen, progesterone, growth hormone) axes, plus a fast/slow metabolic pair (insulin/glucagon, leptin/ghrelin) and bonding hormones (oxytocin, its more male-leaning counterpart vasopressin, and birth-triggered prolactin). Testosterone/estrogen follow a real puberty ramp and senescence decline (andropause/menopause); feeds back (small, bounded terms) into mortality risk (chronic cortisol, glucagon's fasting-adaptation discount) and pair-bond strength (dynamic oxytocin/vasopressin).
 
 ### Seasonal Fertility
 Once a community discovers `calendar`, conception odds get a further seasonal nudge (spring highest, winter lowest, ±8% bounded) layered on top of individual FSHR_01-driven fertility — a population with no calendar sees no seasonal pattern at all.

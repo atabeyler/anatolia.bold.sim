@@ -48,13 +48,53 @@ export default function PsychologyPanel() {
   // traits above (oxytocin_sensitivity, stress_reactivity, ...): these rise
   // and fall tick by tick with real per-individual state.
   const meanHormones: Record<string, number> = s?.mean_hormones ?? {};
-  const HORMONES: { key: string; color: string; label: { tr: string; en: string; de: string; fr: string; ar: string } }[] = [
-    { key: 'cortisol',     color: 'bg-red-500',    label: { tr: 'Kortizol',    en: 'Cortisol',    de: 'Cortisol',    fr: 'Cortisol',     ar: 'الكورتيزول' } },
-    { key: 'adrenaline',   color: 'bg-orange-500', label: { tr: 'Adrenalin',   en: 'Adrenaline',  de: 'Adrenalin',   fr: 'Adrénaline',   ar: 'الأدرينالين' } },
-    { key: 'testosterone', color: 'bg-blue-500',   label: { tr: 'Testosteron', en: 'Testosterone', de: 'Testosteron', fr: 'Testostérone', ar: 'التستوستيرون' } },
-    { key: 'estrogen',     color: 'bg-pink-500',   label: { tr: 'Östrojen',    en: 'Estrogen',    de: 'Östrogen',    fr: 'Œstrogène',    ar: 'الإستروجين' } },
-    { key: 'dopamine',     color: 'bg-yellow-500', label: { tr: 'Dopamin',     en: 'Dopamine',    de: 'Dopamin',     fr: 'Dopamine',     ar: 'الدوبامين' } },
-    { key: 'oxytocin',     color: 'bg-green-500',  label: { tr: 'Oksitosin',   en: 'Oxytocin',    de: 'Oxytocin',    fr: 'Ocytocine',    ar: 'الأوكسيتوسين' } },
+  type HormoneDef = { key: string; color: string; label: { tr: string; en: string; de: string; fr: string; ar: string } };
+  type HormoneGroup = { title: { tr: string; en: string; de: string; fr: string; ar: string }; items: HormoneDef[] };
+  // Grouped by real endocrine axis (matches hormones.rs's own organization,
+  // see AGENTS.md's Hormones section) rather than a flat alphabetical list --
+  // e.g. ACTH/Cortisol/Norepinephrine/Adrenaline are the HPA (stress) axis,
+  // LH/Testosterone/Estrogen/DHEA/Progesterone the HPG (reproductive) axis.
+  const HORMONE_GROUPS: HormoneGroup[] = [
+    {
+      title: { tr: 'Stres Ekseni (HPA)', en: 'Stress Axis (HPA)', de: 'Stressachse (HPA)', fr: 'Axe du stress (HPA)', ar: 'محور الإجهاد (HPA)' },
+      items: [
+        { key: 'acth',           color: 'bg-red-700',    label: { tr: 'ACTH',        en: 'ACTH',        de: 'ACTH',        fr: 'ACTH',         ar: 'ACTH' } },
+        { key: 'cortisol',       color: 'bg-red-500',    label: { tr: 'Kortizol',    en: 'Cortisol',    de: 'Cortisol',    fr: 'Cortisol',     ar: 'الكورتيزول' } },
+        { key: 'norepinephrine', color: 'bg-red-400',    label: { tr: 'Norepinefrin', en: 'Norepinephrine', de: 'Noradrenalin', fr: 'Noradrénaline', ar: 'النورإبينفرين' } },
+        { key: 'adrenaline',     color: 'bg-orange-500', label: { tr: 'Adrenalin',   en: 'Adrenaline',  de: 'Adrenalin',   fr: 'Adrénaline',   ar: 'الأدرينالين' } },
+      ],
+    },
+    {
+      title: { tr: 'Metabolik Eksen', en: 'Metabolic Axis', de: 'Metabolische Achse', fr: 'Axe métabolique', ar: 'المحور الأيضي' },
+      items: [
+        { key: 'tsh',     color: 'bg-cyan-700', label: { tr: 'TSH',     en: 'TSH',     de: 'TSH',     fr: 'TSH',      ar: 'TSH' } },
+        { key: 'thyroid', color: 'bg-cyan-500', label: { tr: 'Tiroid',  en: 'Thyroid', de: 'Schilddrüse', fr: 'Thyroïde', ar: 'الغدة الدرقية' } },
+        { key: 'insulin', color: 'bg-lime-600', label: { tr: 'İnsülin', en: 'Insulin', de: 'Insulin', fr: 'Insuline', ar: 'الأنسولين' } },
+        { key: 'glucagon', color: 'bg-amber-600', label: { tr: 'Glukagon', en: 'Glucagon', de: 'Glukagon', fr: 'Glucagon', ar: 'الغلوكاغون' } },
+        { key: 'leptin',  color: 'bg-lime-400', label: { tr: 'Leptin',  en: 'Leptin',  de: 'Leptin',  fr: 'Leptine',  ar: 'اللبتين' } },
+        { key: 'ghrelin', color: 'bg-amber-400', label: { tr: 'Grelin',  en: 'Ghrelin', de: 'Ghrelin', fr: 'Ghréline', ar: 'الغريلين' } },
+      ],
+    },
+    {
+      title: { tr: 'Üreme Ekseni (HPG)', en: 'Reproductive Axis (HPG)', de: 'Reproduktionsachse (HPG)', fr: 'Axe reproducteur (HPG)', ar: 'المحور التناسلي (HPG)' },
+      items: [
+        { key: 'lh',           color: 'bg-blue-700',  label: { tr: 'LH',          en: 'LH',           de: 'LH',           fr: 'LH',            ar: 'LH' } },
+        { key: 'testosterone', color: 'bg-blue-500',  label: { tr: 'Testosteron', en: 'Testosterone', de: 'Testosteron',  fr: 'Testostérone',  ar: 'التستوستيرون' } },
+        { key: 'estrogen',     color: 'bg-pink-500',  label: { tr: 'Östrojen',    en: 'Estrogen',     de: 'Östrogen',     fr: 'Œstrogène',     ar: 'الإستروجين' } },
+        { key: 'progesterone', color: 'bg-pink-700',  label: { tr: 'Progesteron', en: 'Progesterone', de: 'Progesteron',  fr: 'Progestérone',  ar: 'البروجستيرون' } },
+        { key: 'dhea',         color: 'bg-indigo-500', label: { tr: 'DHEA',       en: 'DHEA',         de: 'DHEA',         fr: 'DHEA',          ar: 'DHEA' } },
+        { key: 'growth_hormone', color: 'bg-teal-500', label: { tr: 'Büyüme Hormonu', en: 'Growth Hormone', de: 'Wachstumshormon', fr: 'Hormone de croissance', ar: 'هرمون النمو' } },
+      ],
+    },
+    {
+      title: { tr: 'Bağlanma / Ödül', en: 'Bonding / Reward', de: 'Bindung / Belohnung', fr: 'Attachement / Récompense', ar: 'الترابط / المكافأة' },
+      items: [
+        { key: 'dopamine',     color: 'bg-yellow-500', label: { tr: 'Dopamin',     en: 'Dopamine',     de: 'Dopamin',     fr: 'Dopamine',     ar: 'الدوبامين' } },
+        { key: 'oxytocin',     color: 'bg-green-500',  label: { tr: 'Oksitosin',   en: 'Oxytocin',     de: 'Oxytocin',    fr: 'Ocytocine',    ar: 'الأوكسيتوسين' } },
+        { key: 'vasopressin',  color: 'bg-green-700',  label: { tr: 'Vazopressin', en: 'Vasopressin',  de: 'Vasopressin', fr: 'Vasopressine', ar: 'الفازوبريسين' } },
+        { key: 'prolactin',    color: 'bg-purple-500', label: { tr: 'Prolaktin',   en: 'Prolactin',    de: 'Prolaktin',   fr: 'Prolactine',   ar: 'البرولاكتين' } },
+      ],
+    },
   ];
 
   const tom = TOM_LABELS[tomStage] ?? TOM_LABELS[0];
@@ -171,19 +211,26 @@ export default function PsychologyPanel() {
         <h4 className="text-sim-gold text-xs font-semibold uppercase tracking-widest mb-2">
           {text(lang as LangCode, { tr: 'Hormonal Sistem (Nüfus Ort.)', en: 'Hormonal System (Pop. Avg.)', de: 'Hormonsystem (Bev.-Durchschn.)', fr: 'Système hormonal (moy. pop.)', ar: 'الجهاز الهرموني (متوسط السكان)' })}
         </h4>
-        <div className="space-y-2">
-          {HORMONES.map(({ key, color, label }) => {
-            const value = meanHormones[key] ?? 0;
-            return (
-              <div key={key}>
-                <div className="flex justify-between mb-1">
-                  <span className="text-sim-muted text-xs">{text(lang as LangCode, label)}</span>
-                  <span className="text-sim-text text-xs font-mono">{(value * 100).toFixed(0)}%</span>
-                </div>
-                <Bar value={value} color={color} />
+        <div className="space-y-3">
+          {HORMONE_GROUPS.map(group => (
+            <div key={group.title.en}>
+              <div className="text-sim-muted text-xs uppercase tracking-wide mb-1 opacity-70">{text(lang as LangCode, group.title)}</div>
+              <div className="space-y-1.5">
+                {group.items.map(({ key, color, label }) => {
+                  const value = meanHormones[key] ?? 0;
+                  return (
+                    <div key={key}>
+                      <div className="flex justify-between mb-0.5">
+                        <span className="text-sim-muted text-xs">{text(lang as LangCode, label)}</span>
+                        <span className="text-sim-text text-xs font-mono">{(value * 100).toFixed(0)}%</span>
+                      </div>
+                      <Bar value={value} color={color} />
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </div>
 

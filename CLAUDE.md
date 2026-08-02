@@ -198,7 +198,7 @@ browser support.
 | `rust/sim-core/src/economy.rs` | 12 resources, 11 goods, trade, Gini coefficient |
 | `rust/sim-core/src/environment.rs` | 10 biomes, 8 weather types, worldState |
 | `rust/sim-core/src/psychology.rs` | Mental states, ToM (0–3), attachment, trauma |
-| `rust/sim-core/src/hormones.rs` | Dynamic endocrine system — cortisol, adrenaline, testosterone, estrogen, dopamine, oxytocin |
+| `rust/sim-core/src/hormones.rs` | Dynamic endocrine system — 20 hormones across HPA/HPT/HPG axes |
 | `rust/sim-core/src/microbiome.rs` | 9 pathogens, transmission modes, immunity |
 | `rust/sim-core/src/tick.rs` | Main tick orchestrator |
 
@@ -230,7 +230,7 @@ skills, beliefs       // beliefs: Set in memory, Array in DB
 language              // { stage, foxp2_expression, vocabulary, grammar, writing }
 memory                // { social[], events[], knowledge[] }
 psychology            // { mental_state, wellbeing, stress_level, trauma_events, ... }
-hormones              // { cortisol, adrenaline, testosterone, estrogen, dopamine, oxytocin } (see Hormones section)
+hormones              // 20 dynamic hormones across the HPA/HPT/HPG axes -- see Hormones section
 inventory             // { resource_id: quantity }
 parent_1_id, parent_2_id, inbreeding_coeff
 is_founder, home_x, home_y, group_id
@@ -287,19 +287,46 @@ after `psychology::update_mental_state` (needs this tick's fresh
 `stress_level`) and after the economy phase (needs this tick's fresh
 `satiation`).
 
+**Twenty hormones**, organized as a genuine cascade around the real
+hypothalamic-pituitary-target-gland axes (not twenty independent flat
+values):
+
+| Axis | Hormones | Cascade |
+|---|---|---|
+| HPA (stress) | ACTH, cortisol, norepinephrine, adrenaline | ACTH (pituitary) drives cortisol (adrenal); norepinephrine sets adrenaline's own resting floor |
+| HPT (metabolic tempo) | TSH, thyroid | TSH rises via real negative feedback when the *previous* tick's thyroid ran low, then drives it back up |
+| HPG (reproductive) | LH, testosterone, estrogen, DHEA, progesterone, growth hormone | LH (gonadotropin pulse) + DHEA (adrenal precursor) both modulate testosterone/estrogen's own age/sex baseline; progesterone tracks pregnancy specifically |
+| Metabolic pair | insulin/glucagon (fast, same-tick), leptin/ghrelin (slow trend vs. fast acute hunger) | both track nutritional state at genuinely different timescales |
+| Bonding/reproductive | oxytocin, vasopressin, prolactin | vasopressin is oxytocin's more male-leaning counterpart; prolactin surges only on birth |
+
 ```
-cortisol_target    = stress_level * (0.4 + stress_reactivity * 0.6)
-adrenaline_target  = 0.6 + risk_tolerance * 0.4   (if hp < 0.25, else 0.05)
-dopamine_target    = baseline ± swing from this tick's satiation vs. a hungry/well-fed threshold
-oxytocin_target    = oxytocin_sensitivity * 0.3, +15% of that while in a group
-testosterone/estrogen_target = sex-differentiated puberty-ramp / senescence-decline
-                                curve (see below), +estrogen*0.6 while pregnant
+acth_target        = stress_level                                        (upstream of cortisol)
+cortisol_target     = acth * (0.4 + stress_reactivity * 0.6)
+norepinephrine_target = 0.6 if acute_threat, else (0.15 + stress_level*0.2)
+adrenaline_target  = 0.6 + risk_tolerance*0.4 if acute_threat, else (norepinephrine*0.3 + 0.05)
+  acute_threat      = hp < 0.25 OR ghrelin > 0.8
+insulin_target      = satiation                     glucagon_target      = 1 - satiation
+leptin_target       = satiation (slow EMA, 0.03/tick)  ghrelin_target     = 1 - satiation (fast, 0.4/tick)
+tsh_target          = (1 - thyroid_prev_tick) * 0.7 + 0.15                (negative feedback)
+thyroid_target      = 0.25 + satiation*0.35 + tsh*0.3
+lh_target           = puberty(age)                  dhea_target          = dhea_curve(age)
+testosterone_target = base_t(age,sex,dominance,fertility) * (0.7+0.3*lh) * (0.85+0.15*dhea)
+estrogen_target     = base_e(...) * (1.6 if pregnant) * (0.7+0.3*lh) * (0.85+0.15*dhea)
+progesterone_target = 0.85 if pregnant, else (female: 0.1 + fertility*0.1*puberty(age); male: 0.05)
+growth_hormone_target = growth_hormone_curve(age)                        (age-curve only, no feedback hook -- see below)
+dopamine_target     = (baseline ± swing from satiation vs. a hungry/well-fed threshold) * (0.9 + 0.1*leptin)
+oxytocin_target     = oxytocin_sensitivity*0.3, +15% of that while in a group
+vasopressin_sensitivity = (parental_care*0.5 + cooperation*0.5)          (AVPR1A_01 isn't exposed as a raw phenotype field, so approximated from its two known downstream traits)
+vasopressin_target  = vasopressin_sensitivity*0.3, +15% of that while in a group
+prolactin_target    = 0.05                                               (birth surges it directly, see below; this is just its decay floor)
 ```
 
 Each hormone blends toward its target rather than snapping to it, at a
-hormone-specific rate reflecting real clearance speed: adrenaline fastest
-(0.5–0.8/tick), cortisol moderate (0.2/tick), oxytocin/dopamine slower
-(0.15–0.4/tick), testosterone/estrogen slowest (0.1/tick).
+hormone-specific rate reflecting real clearance/gland-response speed:
+adrenaline fastest (0.5–0.8/tick), ghrelin/insulin/glucagon fast (0.35–0.4),
+cortisol/norepinephrine/oxytocin/vasopressin/dopamine/progesterone moderate
+(0.12–0.25), thyroid/lh/tsh slower (0.08–0.15), testosterone/estrogen/dhea/
+growth_hormone/leptin/prolactin slowest (0.02–0.1).
 
 **Puberty/senescence curve (testosterone/estrogen baseline):**
 ```
@@ -311,29 +338,60 @@ senescence(age, sex) = male:   1                       if age < 50
                       = female: 1                       if age < 45
                               (1 - (age-45)/10*0.85), floor 0.15 if 45 <= age < 55
                               0.15                       if age >= 55          (menopause: steeper)
-male   testosterone = 0.15 + 0.55 * puberty * (0.7 + dominance*0.3) * senescence;  estrogen = 0.06 flat
-female estrogen     = 0.12 + 0.55 * puberty * (0.7 + fertility*0.3) * senescence;  testosterone = 0.08 flat
+male   base_t = 0.15 + 0.55 * puberty * (0.7 + dominance*0.3) * senescence;  base_e = 0.06 flat
+female base_e = 0.12 + 0.55 * puberty * (0.7 + fertility*0.3) * senescence;  base_t = 0.08 flat
+dhea_curve(age)          = age/25 (0..25y, capped 1.0); (1 - (age-25)*0.012), floor 0.1 (25y+)   -- adrenopause, shared by both sexes
+growth_hormone_curve(age) = 0.4 + 0.6*puberty(age) (< 17y); (1 - (age-17)*0.012), floor 0.15 (17y+) -- somatopause
 ```
 
-Both sexes always carry some of each hormone (biologically accurate); only
-the sex-typical one follows the puberty/senescence curve.
+Both sexes always carry some of each sex hormone (biologically accurate);
+only the sex-typical one follows the puberty/senescence curve. DHEA is a
+*separate*, shared-by-both-sexes adrenal precursor curve (peaks ~25, then
+"adrenopause" decline) that modulates both testosterone and estrogen a
+second, independent way from their own sex-specific senescence curve.
 
 **Mating surge:** `apply_mating_surge()` is called directly from `tick.rs`'s
 reproduction phase, at the exact call site (`process_bonding(mother, father,
 "mating")`) mating is already rolled at -- a real, discrete, this-instant
-event, not inferred from an event log. Both parents get testosterone +0.1,
-estrogen +0.1, and oxytocin `+ oxytocin_sensitivity * 0.4` (capped at 1.0).
+event, not inferred from an event log. Both parents get LH +0.15,
+testosterone +0.1, estrogen +0.1, oxytocin `+ oxytocin_sensitivity * 0.4`,
+and vasopressin `+ vasopressin_sensitivity * 0.4` (all capped at 1.0).
 
-**Feedback into existing systems** (each a small, bounded, additive term
-layered on top of the existing formula, never replacing it -- same pattern
-as seasonal fertility/kinship-mate-weight elsewhere in this doc):
+**Birth surge:** `apply_birth_surge()` is called directly from `tick.rs`, at
+the exact point a birth is resolved (`mother.health.pregnancy = None`).
+Prolactin surges `+0.7` (capped at 1.0), then decays slowly back toward its
+0.05 floor over subsequent ticks (weeks-scale, matching real lactation) via
+`update_hormones`'s own `prolactin_target`.
+
+**Feedback into existing systems** (each a small, bounded, additive/
+multiplicative term layered on top of the existing formula, never replacing
+it -- same pattern as seasonal fertility/kinship-mate-weight elsewhere in
+this doc):
 - `mortality::compute_daily_death_risk` adds `(cortisol - 0.6) * 0.0006`
   once cortisol exceeds 0.6 (chronic HPA-axis activation), zero below that
-  threshold.
-- `psychology::process_bonding`'s bond-strength formula now blends 80% the
+  threshold; separately, once `health.calories < 0.4` (the existing
+  metabolism-driven risk multiplier), elevated glucagon (> 0.6) applies a
+  small *discount* -- `1 - (glucagon - 0.6) * 0.2` -- modeling the real
+  hormonal fasting-adaptation response (mobilized energy reserves).
+- `psychology::process_bonding`'s bond-strength formula blends 80% the
   original genetic `oxytocin_sensitivity` average with 20% the pair's
-  current dynamic `oxytocin` average -- the same hormone/receptor split
-  real oxytocin biology has.
+  current dynamic `oxytocin` average (the same hormone/receptor split real
+  oxytocin biology has), plus a small additional term from each *male*
+  participant's own current `vasopressin` level (real pair-bonding/
+  mate-guarding research skews AVP's social role more male-specific than
+  oxytocin's).
+
+**Deliberately not modeled:** hormones with no corresponding subsystem in
+this simulation at all -- digestive-tract hormones (gastrin, secretin, CCK,
+motilin: no real digestion subsystem, only abstract calories/hydration),
+cardiovascular (ANP, BNP, renin, erythropoietin: no blood-pressure/
+blood-volume subsystem), bone/calcium (PTH, calcitonin: no skeletal
+subsystem), and melatonin (no day/night cycle at this simulation's
+one-tick-per-day resolution). Adding these as flat, causally inert fields
+would violate the same cardinal-rule spirit this module otherwise upholds:
+every value here is real and load-bearing, not decorative. They can be
+added once/if their own underlying subsystem exists to actually drive and
+be driven by them.
 
 `client_view::derive_stats` exposes population averages as
 `stats.mean_hormones` (`hormones::compute_population_hormone_stats`, same

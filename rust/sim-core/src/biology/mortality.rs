@@ -110,6 +110,14 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
 
     if health.calories < 0.4 {
         base_risk *= 1.0 + (phenotype.metabolism - 0.5) * 0.2;
+        // Elevated glucagon (see hormones.rs) reflects a genuine hormonal
+        // fasting-adaptation response -- mobilized energy reserves -- so a
+        // starving individual whose glucagon has actually ramped up gets a
+        // small, bounded discount on top of the metabolism-driven term
+        // above, rather than none at all.
+        if individual.hormones.glucagon > 0.6 {
+            base_risk *= 1.0 - (individual.hormones.glucagon - 0.6) * 0.2;
+        }
     }
 
     if individual._in_water() {
