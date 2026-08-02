@@ -18,7 +18,7 @@ Founders carry precisely tuned alleles across 32 gene loci (FOXP2, BDNF, NRXN1, 
 
 ## Architecture
 
-The simulation runs 18 concurrent engines per tick (1 tick = 1 simulation day):
+The simulation runs 19 concurrent engines per tick (1 tick = 1 simulation day):
 
 | Engine | Purpose |
 |---|---|
@@ -29,6 +29,7 @@ The simulation runs 18 concurrent engines per tick (1 tick = 1 simulation day):
 | **Language** | FOXP2 expression growth, 7-stage emergence, organic vocabulary |
 | **Consciousness** | Genetics × language × social context, gated by potential |
 | **Psychology** | Wellbeing, stress, theory of mind (0–3), grief, attachment |
+| **Hormones** | Dynamic cortisol/adrenaline/testosterone/estrogen/dopamine/oxytocin, puberty and senescence curves |
 | **Agent Behavior / Movement** | Need-driven action selection, land-gated pathfinding, group cohesion |
 | **Technology** | Cumulative discovery, 25 techs across 5 tiers (0–4) |
 | **Belief** | Proto-beliefs escalating through 6 opaque complexity tiers, named only by the population's own emergent language |
@@ -70,6 +71,9 @@ A group's accumulated astronomy knowledge (specifically the `seasonal_calendar` 
 ```
 QoL = consciousness×0.3 + (lang_stage/6)×0.2 + health×0.3 + wellbeing×0.2
 ```
+
+### Dynamic Hormones
+Distinct from static genetic traits, `hormones.rs` tracks an actual circulating level per hormone that rises and falls tick by tick: cortisol tracks real stress, adrenaline spikes on acute danger (critical HP) and clears fast, testosterone/estrogen follow a real puberty ramp and senescence decline (andropause/menopause) modulated by dominance/fertility genetics and pregnancy, dopamine responds to same-tick nutritional reward, and oxytocin rises with group presence and surges on mating — feeding back (small, bounded terms) into mortality risk (chronic cortisol) and pair-bond strength (dynamic oxytocin).
 
 ### Seasonal Fertility
 Once a community discovers `calendar`, conception odds get a further seasonal nudge (spring highest, winter lowest, ±8% bounded) layered on top of individual FSHR_01-driven fertility — a population with no calendar sees no seasonal pattern at all.
@@ -196,7 +200,7 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 | Technology | Discovery tree by tier, discoverer stories |
 | Belief | Emerged belief systems (named/unnamed), ritual log |
 | Culture | Meme emergence, cultural prestige, meme-stage progression |
-| Psychology | Wellbeing, stress, consciousness, theory of mind, mood drivers |
+| Psychology | Wellbeing, stress, consciousness, theory of mind, mood drivers, population-average hormone levels |
 | Epigenetics | Methylation levels and inheritance rates (HPA, BDNF, OXTR, …) |
 | Genetic Diversity | Heterozygosity, allelic variance, effective population size, inbreeding trend, per-group founder-effect breakdown |
 | Genealogy | Family tree from any selected root individual, with an auto-generated biography |

@@ -319,3 +319,68 @@ impl Default for Psychology {
         serde_json::from_value(Value::Object(Map::new())).expect("all Psychology fields have defaults")
     }
 }
+
+fn cortisol_default() -> f64 {
+    0.3
+}
+fn dopamine_default() -> f64 {
+    0.35
+}
+fn adrenaline_default() -> f64 {
+    0.05
+}
+fn sex_hormone_default() -> f64 {
+    0.1
+}
+fn oxytocin_default() -> f64 {
+    0.15
+}
+
+/// Dynamic, tick-by-tick circulating hormone levels -- distinct from the
+/// static genome-derived phenotype traits (`oxytocin_sensitivity`,
+/// `serotonin`, `aggression`, `dominance`, ...) which represent *receptor
+/// sensitivity*/genetic predisposition, not an actual secreted amount. See
+/// `hormones.rs`, the sole writer of every field here (cardinal rule, same
+/// as `mind.consciousness`): every value is a formula over genetics
+/// (phenotype/sex/age) and this tick's real, already-tracked state
+/// (stress_level, hp, pregnancy, group membership) -- never scripted per
+/// individual.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Hormones {
+    /// HPA-axis stress hormone. Tracks `psychology.stress_level`, scaled by
+    /// the individual's own genetic `stress_reactivity`.
+    #[serde(default = "cortisol_default")]
+    pub cortisol: f64,
+    /// Acute fight-or-flight response. Near-zero at rest; spikes fast on a
+    /// same-tick acute threat (disaster, exile, critical HP) and clears fast
+    /// once the threat passes -- much quicker dynamics than cortisol.
+    #[serde(default = "adrenaline_default")]
+    pub adrenaline: f64,
+    /// Sex-differentiated; follows a real puberty ramp (childhood -> ~17y)
+    /// and senescence decline (andropause), modulated by genetic dominance.
+    #[serde(default = "sex_hormone_default")]
+    pub testosterone: f64,
+    /// Sex-differentiated; follows a real puberty ramp, cycles with
+    /// pregnancy, and declines after the fertile window (menopause-like),
+    /// modulated by genetic fertility.
+    #[serde(default = "sex_hormone_default")]
+    pub estrogen: f64,
+    /// Reward/motivation. Rises with a same-tick positive nutritional swing
+    /// (successful foraging after hunger), decays otherwise toward a
+    /// genetic baseline (curiosity/risk_tolerance).
+    #[serde(default = "dopamine_default")]
+    pub dopamine: f64,
+    /// Dynamic circulating bonding hormone -- distinct from the static
+    /// genetic `oxytocin_sensitivity` (receptor sensitivity) it's scaled
+    /// by. Rises with group presence and surges on mating.
+    #[serde(default = "oxytocin_default")]
+    pub oxytocin: f64,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Default for Hormones {
+    fn default() -> Self {
+        serde_json::from_value(Value::Object(Map::new())).expect("all Hormones fields have defaults")
+    }
+}

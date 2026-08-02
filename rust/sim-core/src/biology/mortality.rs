@@ -131,6 +131,16 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
         base_risk += env.get("disease_pressure").and_then(Value::as_f64).unwrap_or(0.0) * 0.0003 * env_mult;
     }
 
+    // Sustained (>0.6) cortisol elevation -- chronic HPA-axis activation, see
+    // hormones.rs -- carries a small, bounded extra mortality contribution,
+    // matching the disease_pressure additive-term style just above. Below
+    // that threshold cortisol contributes nothing extra here: a short-term
+    // stress response is adaptive, not harmful, and psychology::update_mental_state
+    // already accounts for stress's own direct HP cost separately.
+    if individual.hormones.cortisol > 0.6 {
+        base_risk += (individual.hormones.cortisol - 0.6) * 0.0006;
+    }
+
     // >= (not strictly >) 0.25: a strict "> 0.25" gate would never fire for
     // the single most common inbreeding scenario a small founder population
     // hits -- full-sibling or parent-offspring mating, which produces

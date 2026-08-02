@@ -109,6 +109,23 @@ fn no_engine_sets_max_lifespan_directly() {
 }
 
 #[test]
+fn only_hormones_rs_may_directly_assign_individual_hormones() {
+    // biology/individual.rs's struct-literal `hormones: Default::default()`
+    // placeholders don't match this pattern (no leading `.`) -- they're
+    // immediately overwritten by hormones::initialize_hormones right after
+    // construction, which does match and is the allowed writer.
+    let mut files = Vec::new();
+    collect_source_files(&src_dir(), &mut files);
+    let violators: Vec<String> = files
+        .iter()
+        .filter(|f| file_name(f) != "hormones.rs")
+        .filter(|f| assigns_field(&production_source(f), ".hormones"))
+        .map(|f| f.display().to_string())
+        .collect();
+    assert!(violators.is_empty(), "files writing .hormones outside hormones.rs: {violators:?}");
+}
+
+#[test]
 fn known_techs_are_only_added_via_technology_rs_or_agent_rs() {
     let mut files = Vec::new();
     collect_source_files(&src_dir(), &mut files);

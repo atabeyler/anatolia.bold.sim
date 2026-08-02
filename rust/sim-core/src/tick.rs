@@ -21,8 +21,8 @@ use web_time::Instant;
 
 use crate::{
     agent, architecture, art, astronomy, belief, biology, client_view::pascal_to_snake,
-    consciousness, culture, economy, environment, epigenetics, language, law, microbiome,
-    milestones, psychology, social, spatial::SpatialGrid, technology, PhaseTimings,
+    consciousness, culture, economy, environment, epigenetics, hormones, language, law,
+    microbiome, milestones, psychology, social, spatial::SpatialGrid, technology, PhaseTimings,
     SimulationState, TickReport,
 };
 
@@ -825,6 +825,10 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
             // Cardinal rule: consciousness may only be mutated here.
             consciousness::update_consciousness(individual);
             psychology::update_mental_state(individual, &kin_death_events, world_value_ref, current_day);
+            // Reads this tick's just-updated stress_level, so must run after
+            // update_mental_state above; reads this tick's satiation, which
+            // the earlier economy phase already wrote to extra["satiation"].
+            hormones::update_hormones(individual, current_day);
             environment::update_water_state(individual);
         });
     }
@@ -1208,6 +1212,7 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                     mother.social.children_ids.extend(child_and_sibling_ids.iter().cloned());
                     father.social.children_ids.extend(child_and_sibling_ids.iter().cloned());
                     psychology::process_bonding(mother, father, "mating");
+                    hormones::apply_mating_surge(mother, father);
                 }
             }
         }
