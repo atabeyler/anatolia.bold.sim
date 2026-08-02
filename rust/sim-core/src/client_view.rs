@@ -481,7 +481,21 @@ pub fn build_event_description(event_type: &str, raw: &Value, sim: &SimulationSt
         }
         "death" => {
             let id = raw.get("individual_id").and_then(Value::as_str).unwrap_or("");
-            let name = find_individual(sim, id).map(individual_display_name).unwrap_or_else(|| "Individual".to_string());
+            // The event itself captures the individual's display name at the
+            // moment of death (tick.rs/environment.rs/social.rs/microbiome.rs)
+            // -- preferred over a live find_individual lookup, which silently
+            // degrades to "Individual" once the dead individual has aged past
+            // DEAD_FIELD_STRIP_GRACE_DAYS and been pruned from the in-memory
+            // population (a large tick batch at high sim speed can easily
+            // outlast that grace window before this description is ever
+            // built). Falls back to the live lookup only for older events
+            // recorded before this field existed.
+            let name = raw
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| find_individual(sim, id).map(individual_display_name))
+                .unwrap_or_else(|| "Individual".to_string());
             let cause = raw.get("cause").and_then(Value::as_str).map(pascal_to_snake).unwrap_or_else(|| "unknown".to_string());
             format!("{name} died: {cause}")
         }
@@ -719,5 +733,32 @@ mod derive_stats_tests {
         };
         let stats = derive_stats(&sim);
         assert_eq!(stats.get("deaths").and_then(Value::as_i64), Some(2));
+    }
+
+    #[test]
+    fn death_description_uses_the_events_own_captured_name_not_a_live_lookup() {
+        // Regression: build_event_description used to resolve a death event's
+        // display name by looking the individual up live in sim.individuals
+        // at read time. A large tick batch at high sim speed can outlast
+        // DEAD_FIELD_STRIP_GRACE_DAYS before this description is ever built,
+        // pruning the individual from state and silently degrading the name
+        // to "Individual" -- even though tick.rs/environment.rs/social.rs/
+        // microbiome.rs now all capture the real name directly into the
+        // event payload at the moment of death, this only helps if
+        // build_event_description actually prefers it.
+        let sim = SimulationState { individuals: vec![], ..Default::default() };
+        let raw = json!({ "individual_id": "long-pruned-id", "name": "Ada", "cause": "old_age" });
+        let description = build_event_description("death", &raw, &sim);
+        assert_eq!(description, "Ada died: old_age");
+    }
+
+    #[test]
+    fn death_description_falls_back_to_a_live_lookup_for_events_recorded_before_this_field_existed() {
+        let mut ind = Individual { id: "ind-1".to_string(), ..Default::default() };
+        ind.phenotype.name = Some("Eve".to_string());
+        let sim = SimulationState { individuals: vec![ind], ..Default::default() };
+        let raw = json!({ "individual_id": "ind-1", "cause": "old_age" });
+        let description = build_event_description("death", &raw, &sim);
+        assert_eq!(description, "Eve died: old_age");
     }
 }

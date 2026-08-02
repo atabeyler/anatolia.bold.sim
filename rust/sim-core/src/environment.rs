@@ -302,6 +302,7 @@ pub fn process_disaster(
     let mut deaths = 0_i64;
     let mut dead_ids: Vec<String> = Vec::new();
     let mut dead_founder_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut dead_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for ind in population.iter_mut() {
         if ind.is_dead {
             continue;
@@ -331,6 +332,7 @@ pub fn process_disaster(
             ind.death_day = Some(day);
             ind.extra.insert("death_cause".to_string(), json!(disaster_type));
             dead_ids.push(ind.id.clone());
+            dead_names.insert(ind.id.clone(), crate::client_view::individual_display_name(ind));
             if ind.is_founder {
                 dead_founder_ids.insert(ind.id.clone());
             }
@@ -365,6 +367,7 @@ pub fn process_disaster(
             events.push(json!({
                 "type": "death",
                 "individual_id": id,
+                "name": dead_names.get(id).cloned().unwrap_or_else(|| "Unnamed".to_string()),
                 "cause": disaster_type,
                 "day": day,
                 "importance": "medium",

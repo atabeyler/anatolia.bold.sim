@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useSimStore } from '../store/simStore';
 import { playTick, playNotification } from '../utils/audioEngine';
-import { LOCAL_SERVER_URL, isYerelModeActive } from '../utils/nativeMode';
+import { LOCAL_SERVER_URL, isNativeAndroidApp, isYerelModeActive } from '../utils/nativeMode';
+import { CLOUD_API_URL } from '../utils/cloud';
 import { isWasmLocalModeActive } from '../wasmLocal/mode';
 
 export function useSimWebSocket(simId: string | null) {
@@ -33,8 +34,19 @@ export function useSimWebSocket(simId: string | null) {
       // Android "Yerel" mode's local sim-server isn't reachable at
       // location.host (the Capacitor webview's own virtual origin) --
       // it's a real subprocess bound to 127.0.0.1, same as desktop's.
+      // Android "Bulut" mode doesn't navigate the WebView away from its own
+      // bundled origin either (NativeModeGate.tsx's chooseCloud() only ever
+      // repoints axios.defaults.baseURL, never window.location -- a
+      // deliberate workaround for a Capacitor plugin-bridge bug on a real
+      // navigation), so location.host there is still the Capacitor virtual
+      // host, not anatolia-sim.onrender.com -- the socket silently tried to
+      // connect to a nonexistent local endpoint and never delivered a
+      // single tick, leaving the live watch screen looking frozen even
+      // though the simulation kept running server-side.
       const wsHost = isYerelModeActive()
         ? LOCAL_SERVER_URL.replace(/^http/, 'ws')
+        : isNativeAndroidApp()
+        ? CLOUD_API_URL.replace(/^http/, 'ws')
         : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
       const url = `${wsHost}/ws?simId=${encodeURIComponent(simId!)}`;
       const socket = new WebSocket(url);

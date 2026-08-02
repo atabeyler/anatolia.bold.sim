@@ -1102,6 +1102,55 @@ actual state until this was restored. If you see a simulation stuck at
 status `"paused"` with no user action, check its `/diagnostics` error_log
 before assuming it's a manual pause.
 
+## Live watch connection & death-event delivery
+
+`useSimWebSocket.ts`'s `wsHost` resolution must match whichever origin the
+current platform's API calls are actually routed to (`cloud.ts`'s
+`shouldUseCloudApi()`/`CLOUD_API_URL`, `nativeMode.ts`'s `LOCAL_SERVER_URL`)
+-- it used to only special-case Android's own "Yerel" mode (a real
+127.0.0.1 subprocess, unreachable at `location.host`), falling back to
+`location.host` for everything else. That's correct for desktop's own
+Tauri "Bulut" mode (`dist-chooser/index.html` does a genuine
+`window.location.href` navigation to the production origin) and for the
+plain web app, but wrong for Android's "Bulut" mode: `NativeModeGate.tsx`'s
+`chooseCloud()` deliberately never navigates the WebView away from its own
+bundled Capacitor origin (a workaround for a real Capacitor plugin-bridge
+bug on a hard navigation) -- it only repoints `axios.defaults.baseURL`. A
+`location.host`-based WS URL there resolved to the Capacitor virtual host,
+not `anatolia-sim.onrender.com`, so the socket never connected and the live
+watch screen looked permanently frozen even though the simulation kept
+running server-side and REST polls (population list, stats-on-visibility)
+still worked. `wsHost` now checks `isNativeAndroidApp()` (regardless of
+Yerel/Bulut) and resolves to `CLOUD_API_URL` in Bulut mode, mirroring the
+same signal the REST routing already uses.
+
+**Death events surviving a large tick batch:** every death-producing path
+(`tick.rs`'s mortality/birth-complications branches, `environment.rs`'s
+disaster deaths, `social.rs`'s conflict casualties, `microbiome.rs`'s
+infection deaths) now captures the victim's own `individual_display_name`
+directly into the event payload (`"name"`) at the moment of death, and
+`client_view::build_event_description`'s `"death"` branch prefers that
+captured name over a live `find_individual` lookup (falling back to the
+live lookup only for older events recorded before this field existed).
+Without this, a death event whose description was built after the
+individual aged past `DEAD_FIELD_STRIP_GRACE_DAYS` (7 days, `tick.rs`) and
+got pruned from in-memory state silently degraded to the generic name
+"Individual" -- easily reached at high sim speed, where a single
+`runtime.rs` batch can span far more than 7 simulated days before its
+`save_state` flush and any WS client's diff against it ever happen.
+
+Separately, `simStore.ts`'s `addEvent`/`setEvents` used to cap the shared
+`events` array at a flat 200 entries regardless of type
+(`slice(0, 200)`), newest-first. A single WS delivery at high sim speed can
+carry a full batch's worth of accumulated events (`runtime.rs` paces
+roughly one batch per second; `batch_size` scales with the speed
+multiplier), which can easily exceed 200 births/thoughts/discoveries
+alongside a handful of deaths -- the flat cap could silently evict an
+earlier death from that very batch before the Events panel's "Ölüm"/Death
+filter (or the Population panel) ever rendered it. `capEvents()` now gives
+`"death"`-type events their own separate, larger cap (300) so a burst of
+unrelated event types can no longer evict them.
+
 ## Common Patterns
 
 ```js

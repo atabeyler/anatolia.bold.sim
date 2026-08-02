@@ -129,7 +129,7 @@ pub fn process_microbiome_tick(population: &mut [crate::state::Individual], worl
             individual.is_dead = true;
             individual.death_day = Some(sim_day);
             individual.extra.insert("death_cause".to_string(), json!("infection"));
-            events.push(json!({ "type": "death", "individual_id": individual.id, "cause": "infection", "day": sim_day, "importance": "medium", "is_founder": individual.is_founder }));
+            events.push(json!({ "type": "death", "individual_id": individual.id, "name": crate::client_view::individual_display_name(individual), "cause": "infection", "day": sim_day, "importance": "medium", "is_founder": individual.is_founder }));
         }
         if !resolved.is_empty() {
             let resolved_ids: std::collections::HashSet<&str> = resolved.iter().map(|(id, _)| id.as_str()).collect();

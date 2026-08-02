@@ -392,6 +392,37 @@ function normalizeEventKey(event: SimEvent) {
   ].join('|');
 }
 
+const EVENT_CAP = 200;
+// A large tick batch at high sim speed (runtime.rs paces ~1s per batch,
+// batch_size = speed multiplier -- e.g. speed=100 means up to 100 simulated
+// days' worth of events land in a single WS delivery) can easily push more
+// than EVENT_CAP *unrelated* events (thoughts, discoveries, births, ...)
+// alongside a handful of death events within that same batch. A flat
+// slice(0, EVENT_CAP) on the merged, newest-first array would silently
+// evict an older death from that very batch before the user ever sees the
+// Events panel's "Ölüm"/Death filter -- so death events get their own,
+// separate cap instead of sharing the general one.
+const PROTECTED_EVENT_TYPES = new Set(['death']);
+const PROTECTED_EVENT_CAP = 300;
+
+function capEvents(events: SimEvent[]): SimEvent[] {
+  if (events.length <= EVENT_CAP) return events;
+  let protectedCount = 0;
+  let restCount = 0;
+  const kept: SimEvent[] = [];
+  for (const event of events) {
+    if (PROTECTED_EVENT_TYPES.has(event.event_type)) {
+      if (protectedCount >= PROTECTED_EVENT_CAP) continue;
+      protectedCount++;
+    } else {
+      if (restCount >= EVENT_CAP) continue;
+      restCount++;
+    }
+    kept.push(event);
+  }
+  return kept;
+}
+
 export const useSimStore = create<SimStore>((set) => ({
   user: null,
   accessToken: null,
@@ -421,7 +452,7 @@ export const useSimStore = create<SimStore>((set) => ({
   addEvent: (event) => set(s => {
     const key = normalizeEventKey(event);
     if (s.events.some(existing => normalizeEventKey(existing) === key)) return s;
-    return { events: [event, ...s.events].slice(0, 200) };
+    return { events: capEvents([event, ...s.events]) };
   }),
   setEvents: (events) => {
     const seen = new Set<string>();
@@ -431,7 +462,7 @@ export const useSimStore = create<SimStore>((set) => ({
       seen.add(key);
       return true;
     });
-    set({ events: deduped });
+    set({ events: capEvents(deduped) });
   },
   resetLiveState: () => set({ stats: null, events: [], simulationEnded: null, milestones: [], centroidTrail: [], isWarping: false, fastForwardTarget: null, runtimeMetrics: null }),
 
