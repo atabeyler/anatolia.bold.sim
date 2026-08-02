@@ -43,6 +43,20 @@ export default function PsychologyPanel() {
   const stateDistribution: Record<string, number> = s?.mental_state_distribution ?? {};
   const totalWithState = Object.values(stateDistribution).reduce((a, b) => a + b, 0);
 
+  // Population-average dynamic hormone levels (hormones::compute_population_hormone_stats,
+  // see AGENTS.md's Hormones section) -- distinct from the static genetic
+  // traits above (oxytocin_sensitivity, stress_reactivity, ...): these rise
+  // and fall tick by tick with real per-individual state.
+  const meanHormones: Record<string, number> = s?.mean_hormones ?? {};
+  const HORMONES: { key: string; color: string; label: { tr: string; en: string; de: string; fr: string; ar: string } }[] = [
+    { key: 'cortisol',     color: 'bg-red-500',    label: { tr: 'Kortizol',    en: 'Cortisol',    de: 'Cortisol',    fr: 'Cortisol',     ar: 'الكورتيزول' } },
+    { key: 'adrenaline',   color: 'bg-orange-500', label: { tr: 'Adrenalin',   en: 'Adrenaline',  de: 'Adrenalin',   fr: 'Adrénaline',   ar: 'الأدرينالين' } },
+    { key: 'testosterone', color: 'bg-blue-500',   label: { tr: 'Testosteron', en: 'Testosterone', de: 'Testosteron', fr: 'Testostérone', ar: 'التستوستيرون' } },
+    { key: 'estrogen',     color: 'bg-pink-500',   label: { tr: 'Östrojen',    en: 'Estrogen',    de: 'Östrogen',    fr: 'Œstrogène',    ar: 'الإستروجين' } },
+    { key: 'dopamine',     color: 'bg-yellow-500', label: { tr: 'Dopamin',     en: 'Dopamine',    de: 'Dopamin',     fr: 'Dopamine',     ar: 'الدوبامين' } },
+    { key: 'oxytocin',     color: 'bg-green-500',  label: { tr: 'Oksitosin',   en: 'Oxytocin',    de: 'Oxytocin',    fr: 'Ocytocine',    ar: 'الأوكسيتوسين' } },
+  ];
+
   const tom = TOM_LABELS[tomStage] ?? TOM_LABELS[0];
 
   return (
@@ -146,6 +160,27 @@ export default function PsychologyPanel() {
                   <span className={`text-xs capitalize ${info.color}`}>{text(lang as LangCode, { tr: info.tr, en: state, de: info.de, fr: info.fr, ar: info.ar })}</span>
                 </span>
                 <span className="text-sim-muted text-xs font-mono">{totalWithState > 0 ? `${pct.toFixed(0)}%` : '—'}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Hormonal Sistem ── */}
+      <div className="mb-3">
+        <h4 className="text-sim-gold text-xs font-semibold uppercase tracking-widest mb-2">
+          {text(lang as LangCode, { tr: 'Hormonal Sistem (Nüfus Ort.)', en: 'Hormonal System (Pop. Avg.)', de: 'Hormonsystem (Bev.-Durchschn.)', fr: 'Système hormonal (moy. pop.)', ar: 'الجهاز الهرموني (متوسط السكان)' })}
+        </h4>
+        <div className="space-y-2">
+          {HORMONES.map(({ key, color, label }) => {
+            const value = meanHormones[key] ?? 0;
+            return (
+              <div key={key}>
+                <div className="flex justify-between mb-1">
+                  <span className="text-sim-muted text-xs">{text(lang as LangCode, label)}</span>
+                  <span className="text-sim-text text-xs font-mono">{(value * 100).toFixed(0)}%</span>
+                </div>
+                <Bar value={value} color={color} />
               </div>
             );
           })}

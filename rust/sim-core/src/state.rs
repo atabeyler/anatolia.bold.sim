@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::types::{Allele, Epigenome, Genome, Health, Language, Mind, Phenotype, PhonemePalette, Psychology, Social};
+use crate::types::{Allele, Epigenome, Genome, Health, Hormones, Language, Mind, Phenotype, PhonemePalette, Psychology, Social};
 
 /// `Locus::locus_id`/`chromosome`/`expression_type`/`trait_name` are constant
 /// per locus (defined once by `biology::genome::LOCI`), yet were being
@@ -134,6 +134,8 @@ pub struct Individual {
     pub memory: Value,
     #[serde(default)]
     pub psychology: Psychology,
+    #[serde(default)]
+    pub hormones: Hormones,
     #[serde(default)]
     pub inventory: HashMap<String, f64>,
     #[serde(default)]

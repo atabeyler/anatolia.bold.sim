@@ -192,7 +192,14 @@ fn insert_relationship_bounded(relationships: &mut std::collections::HashMap<Str
 }
 
 pub fn process_bonding(ind_a: &mut Individual, ind_b: &mut Individual, interaction_type: &str) {
-    let bs = ((ind_a.phenotype.oxytocin_sensitivity + ind_b.phenotype.oxytocin_sensitivity) / 2.0).max(0.0);
+    // Genetic oxytocin_sensitivity (receptor sensitivity, fixed at birth)
+    // stays the dominant term; a small share now also comes from each
+    // individual's own real, tick-by-tick circulating oxytocin level (see
+    // hormones.rs) -- the same hormone/receptor split real oxytocin biology
+    // has, layered on top rather than replacing the original formula.
+    let genetic_bs = (ind_a.phenotype.oxytocin_sensitivity + ind_b.phenotype.oxytocin_sensitivity) / 2.0;
+    let dynamic_bs = (ind_a.hormones.oxytocin + ind_b.hormones.oxytocin) / 2.0;
+    let bs = (genetic_bs * 0.8 + dynamic_bs * 0.2).max(0.0);
     let d = match interaction_type {
         "mating" => 0.3,
         "cooperation" => 0.1,

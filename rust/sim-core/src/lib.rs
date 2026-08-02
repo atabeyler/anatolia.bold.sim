@@ -1,7 +1,10 @@
+#![recursion_limit = "256"]
+
 pub mod biology;
 pub mod consciousness;
 pub mod environment;
 pub mod epigenetics;
+pub mod hormones;
 pub mod language;
 pub mod technology;
 pub mod economy;
@@ -34,6 +37,7 @@ pub use biology::reproduction::check_reproduction;
 pub use consciousness::{update_consciousness, update_inner_thought};
 pub use environment::{compute_resource_pressure, create_world_state, get_biome, is_on_land, update_world_state};
 pub use epigenetics::{compute_epigenetic_age, inherit_epigenome, initialize_epigenome, update_epigenome};
+pub use hormones::{apply_mating_surge, compute_population_hormone_stats, initialize_hormones, update_hormones};
 pub use language::{
     derive_phoneme_palette, derive_phoneme_palette_from_population, generate_proto_word, get_language_summary, get_vocabulary_by_group, learn_from_teacher, read_written_records,
     record_event_for_posterity, try_acquire_word_from_environment, update_foxp2_expression, update_language_stage, CORE_CONCEPTS, LANGUAGE_STAGES,
@@ -57,7 +61,7 @@ pub use client_view::{
 pub use psychology::{compute_population_psych_stats, initialize_psychology, process_bonding, update_mental_state};
 pub use milestones::check_milestones;
 pub use state::{Individual, PhaseTimings, SimulationState, TickReport, WorldState, TOGGLEABLE_ENGINES};
-pub use types::{Allele, Epigenome, EpigeneticLocus, Genome, Health, Language, Locus, Mind, Phenotype, PhonemePalette, Psychology, Social, Volatile};
+pub use types::{Allele, Epigenome, EpigeneticLocus, Genome, Health, Hormones, Language, Locus, Mind, Phenotype, PhonemePalette, Psychology, Social, Volatile};
 pub use tick::{advance_one_day, DEAD_FIELD_STRIP_GRACE_DAYS};
 
 #[cfg(test)]

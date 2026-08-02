@@ -144,6 +144,11 @@ pub fn create_founder(params: &Value) -> Individual {
         language: default_language(founder_foxp2),
         memory: Value::Null,
         psychology: default_psychology(),
+        // Overwritten immediately below by hormones::initialize_hormones,
+        // which needs the fully-constructed individual (sex/phenotype) to
+        // compute a real baseline -- this placeholder never survives to be
+        // read.
+        hormones: Default::default(),
         inventory: HashMap::new(),
         inbreeding_coeff: Some(0.0),
         extra,
@@ -152,6 +157,7 @@ pub fn create_founder(params: &Value) -> Individual {
     // blends around, before any methylation has had a chance to run --
     // see epigenetics::snapshot_genetic_baseline.
     crate::epigenetics::snapshot_genetic_baseline(&mut individual);
+    crate::hormones::initialize_hormones(&mut individual);
     individual
 }
 
@@ -283,11 +289,17 @@ pub fn create_child(parent1: &Individual, parent2: &Individual, birth_day: i32, 
         language: default_language(child_foxp2),
         memory: Value::Null,
         psychology: default_psychology(),
+        // Overwritten immediately below by hormones::initialize_hormones,
+        // which needs the fully-constructed individual (sex/phenotype) to
+        // compute a real baseline -- this placeholder never survives to be
+        // read.
+        hormones: Default::default(),
         inventory: HashMap::new(),
         inbreeding_coeff: Some(0.0),
         extra,
     };
     crate::epigenetics::snapshot_genetic_baseline(&mut individual);
+    crate::hormones::initialize_hormones(&mut individual);
     individual
 }
 
@@ -306,7 +318,7 @@ pub fn create_child(parent1: &Individual, parent2: &Individual, birth_day: i32, 
 /// adult individual already has.
 pub fn migrate_individual_arrival(source: &Individual, source_current_day: i32, target_current_day: i32) -> Individual {
     let age_days_at_source = (source_current_day - source.birth_day).max(0);
-    Individual {
+    let mut individual = Individual {
         id: Uuid::new_v4().to_string(),
         simulation_id: None,
         birth_day: target_current_day - age_days_at_source,
@@ -336,10 +348,22 @@ pub fn migrate_individual_arrival(source: &Individual, source_current_day: i32, 
         language: source.language.clone(),
         memory: Value::Null,
         psychology: default_psychology(),
+        // Overwritten immediately below by hormones::initialize_hormones,
+        // which needs the fully-constructed individual (sex/phenotype) to
+        // compute a real baseline -- this placeholder never survives to be
+        // read.
+        hormones: Default::default(),
         inventory: HashMap::new(),
         inbreeding_coeff: Some(0.0),
         extra: Map::new(),
-    }
+    };
+    // A fresh arrival's hormones re-baseline the same way health/psychology/
+    // mind do just above -- genetics/sex/age carry over, but the previous
+    // simulation's per-tick circulating levels (mid-stress-response,
+    // mid-pregnancy-surge, whatever they happened to be) don't mean anything
+    // in a simulation this individual never lived a single tick in.
+    crate::hormones::initialize_hormones(&mut individual);
+    individual
 }
 
 #[cfg(test)]

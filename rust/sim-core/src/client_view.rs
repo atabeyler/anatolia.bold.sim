@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 
 use crate::state::{Individual, SimulationState, WorldState};
 use crate::{
-    compute_cultural_prestige, compute_economic_stats, compute_genetic_diversity, compute_genetic_diversity_by_group, compute_health_stats, compute_population_psych_stats,
-    create_founder_for_simulation, create_world_state, derive_phoneme_palette_from_population, get_language_summary, get_vocabulary_by_group, known_techs_json,
+    compute_cultural_prestige, compute_economic_stats, compute_genetic_diversity, compute_genetic_diversity_by_group, compute_health_stats, compute_population_hormone_stats,
+    compute_population_psych_stats, create_founder_for_simulation, create_world_state, derive_phoneme_palette_from_population, get_language_summary, get_vocabulary_by_group, known_techs_json,
 };
 
 /// Builds a brand-new two-founder `SimulationState`, ready to persist and
@@ -131,6 +131,7 @@ pub fn derive_stats(sim: &SimulationState) -> Value {
     let psych_stats = compute_population_psych_stats(&sim.individuals, gini);
     let happiness_index = psych_stats.get("happiness_index").and_then(Value::as_f64).unwrap_or(0.5);
     let mean_stress = psych_stats.get("mean_stress").and_then(Value::as_f64).unwrap_or(0.0);
+    let mean_hormones = compute_population_hormone_stats(&sim.individuals);
 
     let mut mental_state_distribution: HashMap<String, i64> = HashMap::new();
     for ind in &alive {
@@ -230,6 +231,7 @@ pub fn derive_stats(sim: &SimulationState) -> Value {
         "happiness_index": (happiness_index * 1000.0).round() / 1000.0,
         "gini": (gini * 1000.0).round() / 1000.0,
         "mean_stress": (mean_stress * 1000.0).round() / 1000.0,
+        "mean_hormones": mean_hormones,
         "mental_state_distribution": mental_state_distribution,
         "qol_index": (qol_index * 1000.0).round() / 1000.0,
         "avg_consciousness": (avg_consciousness * 1000.0).round() / 1000.0,
@@ -288,6 +290,7 @@ pub fn serialize_individual(ind: &Individual, current_day: i32) -> Value {
         "health": ind.health,
         "mind": ind.mind,
         "psychology": ind.psychology,
+        "hormones": ind.hormones,
         "social": ind.social,
         "skills": ind.skills,
         // Not the raw archetype ids (see belief.rs) -- this is polled

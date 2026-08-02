@@ -127,6 +127,7 @@ browser support.
 | `rust/sim-core/src/economy.rs` | 12 resources, 11 goods, trade, Gini coefficient |
 | `rust/sim-core/src/environment.rs` | 10 biomes, 8 weather types, worldState |
 | `rust/sim-core/src/psychology.rs` | Mental states, ToM (0–3), attachment, trauma |
+| `rust/sim-core/src/hormones.rs` | Dynamic endocrine system — cortisol, adrenaline, testosterone, estrogen, dopamine, oxytocin |
 | `rust/sim-core/src/microbiome.rs` | 9 pathogens, transmission modes, immunity |
 | `rust/sim-core/src/tick.rs` | Main tick orchestrator |
 
@@ -158,6 +159,7 @@ skills, beliefs       // beliefs: Set in memory, Array in DB
 language              // { stage, foxp2_expression, vocabulary, grammar, writing }
 memory                // { social[], events[], knowledge[] }
 psychology            // { mental_state, wellbeing, stress_level, trauma_events, ... }
+hormones              // { cortisol, adrenaline, testosterone, estrogen, dopamine, oxytocin } (see Hormones section)
 inventory             // { resource_id: quantity }
 parent_1_id, parent_2_id, inbreeding_coeff
 is_founder, home_x, home_y, group_id
@@ -195,6 +197,79 @@ ceiling = min(1, consciousness_potential * 1.2)
 ```
 
 `theory_of_mind` lives in `ind.psychology.theory_of_mind` (0–3), advanced by `update_mental_state()` in `psychology.rs`.
+
+## Hormones
+
+Implemented exclusively in `rust/sim-core/src/hormones.rs`. Cardinal rule: no
+other code may directly assign `ind.hormones` (enforced by
+`tests/cardinal_rule_source_scan.rs::only_hormones_rs_may_directly_assign_individual_hormones`).
+Distinct from the static, genome-derived phenotype traits (`oxytocin_sensitivity`,
+`serotonin`, `aggression`, `dominance`, `stress_reactivity`, ...), which model
+receptor sensitivity/predisposition and never change after birth --
+`ind.hormones` models an actual circulating level that rises and falls
+tick by tick, purely as a function of genetics (phenotype/sex/age) and this
+tick's already-tracked real state. `initialize_hormones()` seeds a
+genetics/age baseline once at creation (`create_founder`, `create_child`,
+`migrate_individual_arrival`); `update_hormones()` runs once per living
+individual per tick, in the existing `consciousness_psychology` phase, right
+after `psychology::update_mental_state` (needs this tick's fresh
+`stress_level`) and after the economy phase (needs this tick's fresh
+`satiation`).
+
+```
+cortisol_target    = stress_level * (0.4 + stress_reactivity * 0.6)
+adrenaline_target  = 0.6 + risk_tolerance * 0.4   (if hp < 0.25, else 0.05)
+dopamine_target    = baseline ± swing from this tick's satiation vs. a hungry/well-fed threshold
+oxytocin_target    = oxytocin_sensitivity * 0.3, +15% of that while in a group
+testosterone/estrogen_target = sex-differentiated puberty-ramp / senescence-decline
+                                curve (see below), +estrogen*0.6 while pregnant
+```
+
+Each hormone blends toward its target rather than snapping to it, at a
+hormone-specific rate reflecting real clearance speed: adrenaline fastest
+(0.5–0.8/tick), cortisol moderate (0.2/tick), oxytocin/dopamine slower
+(0.15–0.4/tick), testosterone/estrogen slowest (0.1/tick).
+
+**Puberty/senescence curve (testosterone/estrogen baseline):**
+```
+puberty(age)     = 0                                  if age < 9
+                  = (age - 9) / 8                      if 9 <= age < 17
+                  = 1                                  if age >= 17
+senescence(age, sex) = male:   1                       if age < 50
+                              (1 - (age-50)*0.01), floor 0.4    if age >= 50   (andropause: gradual)
+                      = female: 1                       if age < 45
+                              (1 - (age-45)/10*0.85), floor 0.15 if 45 <= age < 55
+                              0.15                       if age >= 55          (menopause: steeper)
+male   testosterone = 0.15 + 0.55 * puberty * (0.7 + dominance*0.3) * senescence;  estrogen = 0.06 flat
+female estrogen     = 0.12 + 0.55 * puberty * (0.7 + fertility*0.3) * senescence;  testosterone = 0.08 flat
+```
+
+Both sexes always carry some of each hormone (biologically accurate); only
+the sex-typical one follows the puberty/senescence curve.
+
+**Mating surge:** `apply_mating_surge()` is called directly from `tick.rs`'s
+reproduction phase, at the exact call site (`process_bonding(mother, father,
+"mating")`) mating is already rolled at -- a real, discrete, this-instant
+event, not inferred from an event log. Both parents get testosterone +0.1,
+estrogen +0.1, and oxytocin `+ oxytocin_sensitivity * 0.4` (capped at 1.0).
+
+**Feedback into existing systems** (each a small, bounded, additive term
+layered on top of the existing formula, never replacing it -- same pattern
+as seasonal fertility/kinship-mate-weight elsewhere in this doc):
+- `mortality::compute_daily_death_risk` adds `(cortisol - 0.6) * 0.0006`
+  once cortisol exceeds 0.6 (chronic HPA-axis activation), zero below that
+  threshold.
+- `psychology::process_bonding`'s bond-strength formula now blends 80% the
+  original genetic `oxytocin_sensitivity` average with 20% the pair's
+  current dynamic `oxytocin` average -- the same hormone/receptor split
+  real oxytocin biology has.
+
+`client_view::derive_stats` exposes population averages as
+`stats.mean_hormones` (`hormones::compute_population_hormone_stats`, same
+shape/rounding convention as `psychology::compute_population_psych_stats`'s
+`mean_stress`), surfaced in `PsychologyPanel`'s "Hormonal System" section.
+`client_view::serialize_individual` includes the full per-individual
+`hormones` object.
 
 ## FOXP2 Expression
 
