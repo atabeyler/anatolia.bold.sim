@@ -486,6 +486,21 @@ export default function SimulationPage() {
     pollInterval = setInterval(loadPopulation, 3000);
     document.addEventListener('visibilitychange', onVisible);
 
+    // Backstop for `stats` when the WebSocket never delivers a single tick --
+    // e.g. Android "Bulut" mode resolving the wrong WS host (see
+    // useSimWebSocket.ts), a proxy/firewall blocking the WS upgrade, or any
+    // other silent connection failure. Without this, `stats` (population's
+    // own "ÖLÜM"/deaths counter included) was only ever fetched once on
+    // mount/visibility-change and then relied entirely on WS pushes,
+    // leaving the whole stats HUD frozen at whatever it read on that first
+    // fetch for the rest of the session even while the simulation kept
+    // running server-side. Only polls while the socket isn't actually
+    // open, so a healthy WS connection doesn't pay for redundant REST
+    // traffic on top of its own pushes.
+    const statsPollInterval = setInterval(() => {
+      if (useSimStore.getState().wsStatus !== 'open') loadStats();
+    }, 5000);
+
     // Desktop app's "Yerel" (local) mode only: push a lightweight snapshot
     // to the cloud every 20s so this simulation is watchable from any
     // browser (WatchPage.tsx) and listed on the cloud dashboard's "Canlı
@@ -508,6 +523,7 @@ export default function SimulationPage() {
     return () => {
       cancelled = true;
       if (pollInterval) clearInterval(pollInterval);
+      clearInterval(statsPollInterval);
       if (liveSyncInterval) clearInterval(liveSyncInterval);
       if (simRetryTimer) clearTimeout(simRetryTimer);
       document.removeEventListener('visibilitychange', onVisible);

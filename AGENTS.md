@@ -1080,6 +1080,41 @@ filter (or the Population panel) ever rendered it. `capEvents()` now gives
 `"death"`-type events their own separate, larger cap (300) so a burst of
 unrelated event types can no longer evict them.
 
+**Two more layers this same class of bug hit, found once the fixes above
+were live but a native (bundled-client) build hadn't picked them up yet:**
+- `PopulationPanel.tsx`'s deceased-section header used to read
+  `stats?.deaths ?? deadIndividuals.length ?? 0` -- but a *stale-while-
+  correctly-typed* `stats.deaths` (e.g. `0`, frozen because the live WS
+  connection never delivered a single tick) is a present value, not
+  `null`/`undefined`, so the `??` fallback to `deadIndividuals.length` (a
+  separately, always-polled REST fetch, `SimulationPage.tsx`'s
+  `loadPopulation`) never engaged -- the panel showed a fully populated
+  deceased list next to a "(0)" header. Now takes `Math.max(stats?.deaths
+  ?? 0, deadIndividuals.length)`, so a lagging `stats` value can never hide
+  a deceased list the client has already actually fetched.
+- `stats` itself (population's own `deaths` counter included) used to be
+  fetched exactly once on mount/visibility-change (`SimulationPage.tsx`'s
+  `loadStats`) and rely entirely on WS pushes afterward -- fine when the
+  socket is healthy, but when it silently never connects (the Android
+  Bulut `wsHost` bug above, a proxy/firewall blocking the WS upgrade,
+  anything) `stats` froze at whatever it read on that first fetch for the
+  rest of the session, even while the simulation kept running
+  server-side. A `setInterval(loadStats, 5000)` backstop now runs
+  alongside the population poll, but only fires while
+  `useSimStore.getState().wsStatus !== 'open'`, so a healthy WS connection
+  doesn't pay for redundant REST traffic on top of its own pushes.
+- Crucially: none of the client-side fixes in this section (or the
+  `wsHost`/`capEvents` ones above) reach an already-installed Android APK
+  or desktop build the moment they're merged and Render redeploys --
+  unlike the plain web app (always serves the latest built JS), a native
+  build bundles the client at CI build time, so a device only gets these
+  fixes once its app is actually updated/reinstalled from the corresponding
+  `Android Release`/`Desktop Release` workflow run. If a report of one of
+  these symptoms persists after a server-side fix is confirmed live (check
+  `GET /api/health`'s `version` field against the fixing commit's SHA), the
+  next thing to check is whether the reporter's own app build is that
+  recent, not whether the fix regressed.
+
 ## Common Patterns
 
 ```js

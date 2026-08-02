@@ -1642,7 +1642,14 @@ export default function PopulationPanel() {
             className="w-full flex items-center gap-2 px-2 py-1.5"
             style={{ background: 'rgba(160,80,80,0.08)', border: '1px solid rgba(160,80,80,0.25)' }}>
             <span className="font-share-tech tracking-widest flex-1 text-left" style={{ fontSize: 12, color: '#a05050' }}>
-              † {text(lang as LangCode, { en: 'DECEASED', tr: 'HAYATINI KAYBETTİLER', de: 'VERSTORBEN', fr: 'DÉCÉDÉS', ar: 'المتوفون' })} ({stats?.deaths ?? deadIndividuals.length ?? 0})
+              {/* Math.max, not `stats?.deaths ?? deadIndividuals.length` -- a
+                  real-but-stale stats.deaths (e.g. while the live WS
+                  connection is broken, see useSimWebSocket.ts) is a present
+                  value, not null/undefined, so the `??` fallback never
+                  engaged even though deadIndividuals (a separate, always-
+                  polled REST fetch) already proved this list is non-empty.
+                  The panel showed a full deceased list next to "(0)". */}
+              † {text(lang as LangCode, { en: 'DECEASED', tr: 'HAYATINI KAYBETTİLER', de: 'VERSTORBEN', fr: 'DÉCÉDÉS', ar: 'المتوفون' })} ({Math.max(stats?.deaths ?? 0, deadIndividuals.length)})
             </span>
             <ChevronDown size={10} style={{ color: '#a05050', transform: deadExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
           </button>
