@@ -166,18 +166,54 @@ fn record_life_log_milestones(ind: &mut Individual, sim_day: i32, thought: Optio
     ind.mind.extra.insert("inner_thought_log".to_string(), json!(log));
 }
 
+/// The six additive terms of the consciousness-growth formula, exposed as
+/// their own struct (rather than inlined directly in `update_consciousness`)
+/// purely so `consciousness_sensitivity` (this crate's ablation/sensitivity
+/// harness -- see that module's own doc comment) can re-run a trajectory
+/// with one term zeroed out and observe the *real* resulting trajectory,
+/// including how the `.clamp()` in `update_consciousness` interacts with
+/// that change, rather than approximating an ablation by subtracting a
+/// term's contribution after the fact (invalid here specifically because
+/// the clamp makes the formula non-linear across many ticks: removing a
+/// positive term can change whether/when a trajectory hits its ceiling).
+/// `update_consciousness` is a thin wrapper around this that behaves
+/// identically to before this struct existed -- verified by
+/// `consciousness_never_exceeds_its_genetic_ceiling` and this module's other
+/// existing tests, none of which needed to change.
+pub struct ConsciousnessDelta {
+    pub base_rate: f64,
+    pub lang_bonus: f64,
+    pub social_bonus: f64,
+    pub tom_bonus: f64,
+    pub stress_penalty: f64,
+    pub injury_penalty: f64,
+}
+
+impl ConsciousnessDelta {
+    pub fn sum(&self) -> f64 {
+        self.base_rate + self.lang_bonus + self.social_bonus + self.tom_bonus - self.stress_penalty - self.injury_penalty
+    }
+}
+
+pub fn compute_consciousness_delta(ind: &Individual) -> ConsciousnessDelta {
+    let potential = ind.phenotype.consciousness_potential;
+    let hp = ind.health.hp;
+    ConsciousnessDelta {
+        base_rate: (potential * 0.001).max(0.00015),
+        lang_bonus: ind.language.stage as f64 / 6.0 * 0.0005,
+        social_bonus: if ind.group_id.is_some() { 0.0002 } else { 0.0 },
+        tom_bonus: ind.psychology.theory_of_mind as f64 / 3.0 * 0.0003,
+        stress_penalty: ind.psychology.stress_level * 0.0003,
+        injury_penalty: if hp < 0.3 { (0.3 - hp) * 0.002 } else { 0.0 },
+    }
+}
+
 pub fn update_consciousness(ind: &mut Individual) {
     let potential = ind.phenotype.consciousness_potential;
-    let base_rate = (potential * 0.001).max(0.00015);
-    let lang_bonus = ind.language.stage as f64 / 6.0 * 0.0005;
-    let social_bonus = if ind.group_id.is_some() { 0.0002 } else { 0.0 };
-    let stress_penalty = ind.psychology.stress_level * 0.0003;
-    let tom_bonus = ind.psychology.theory_of_mind as f64 / 3.0 * 0.0003;
-    let hp = ind.health.hp;
-    let injury_penalty = if hp < 0.3 { (0.3 - hp) * 0.002 } else { 0.0 };
+    let delta = compute_consciousness_delta(ind);
     let current = ind.mind.consciousness;
     let ceiling = (potential * 1.2).min(1.0);
-    let next = (current + base_rate + lang_bonus + social_bonus + tom_bonus - stress_penalty - injury_penalty).clamp(0.0, ceiling);
+    let next = (current + delta.sum()).clamp(0.0, ceiling);
     ind.mind.consciousness = next;
 }
 
