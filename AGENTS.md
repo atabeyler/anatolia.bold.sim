@@ -180,17 +180,41 @@ Cardinal rule: no other code may directly set `ind.mind.consciousness`.
 
 ```
 baseRate      = max(potential * 0.001, 0.00015)
-langBonus     = (lang_stage / 6) * 0.0005
-socialBonus   = 0.0002  (if ind is in a group, else 0)
-tomBonus      = (theory_of_mind / 3) * 0.0003
+langBonus     = (lang_stage / 6) * 0.0005 * genetic_responsiveness_multiplier(language_capacity)
+socialBonus   = 0.0002 * genetic_responsiveness_multiplier(oxytocin_sensitivity)  (if ind is in a group, else 0)
+tomBonus      = (theory_of_mind / 3) * 0.0003 * genetic_responsiveness_multiplier(self_awareness)
 stressPenalty = stress_level * 0.0003
 injuryPenalty = (0.3 - hp) * 0.002  (if hp < 0.3, else 0)
 
 Delta   = baseRate + langBonus + socialBonus + tomBonus - stressPenalty - injuryPenalty
 ceiling = min(1, consciousness_potential * 1.2)
+
+genetic_responsiveness_multiplier(trait_value) = 0.5 + clamp(trait_value, 0, 1)   -- range 0.5x-1.5x
 ```
 
 `theory_of_mind` lives in `ind.psychology.theory_of_mind` (0–3), advanced by `update_mental_state()` in `psychology.rs`.
+
+**Genetically evolvable responsiveness, not just a genetically evolvable
+ceiling:** the three environment-driven bonus terms (language, social,
+theory-of-mind) used to apply the exact same flat coefficient to every
+individual regardless of genetics -- only `consciousness_potential` (the
+formula's ceiling) was genetically determined; how fast an individual's
+consciousness actually *grew* toward that ceiling from a given amount of
+language/social/ToM input was not. `genetic_responsiveness_multiplier`
+scales each bonus by the same phenotype trait that bonus is thematically
+tied to (`language_capacity` for langBonus, `oxytocin_sensitivity` for
+socialBonus, `self_awareness` for tomBonus), so two individuals with
+identical language stage/group membership/ToM level but different genetics
+now grow consciousness at genuinely different rates, not just cap out at
+different ceilings. At the default phenotype value (0.5) the multiplier is
+exactly 1.0, so this is purely additive variation, not a rebalancing --
+existing behavior at population-average genetics is unchanged.
+`rust/sim-core/src/consciousness_sensitivity.rs` (an ablation-based
+sensitivity-analysis harness, `cargo run --example
+consciousness_sensitivity_report -p sim-core`) validates each bonus/penalty
+term is actually load-bearing (moves trajectories in the expected direction,
+is a no-op exactly when its own gating condition doesn't hold) across four
+representative individual profiles.
 
 ## Hormones
 
@@ -624,57 +648,53 @@ top of (never replacing) FSHR_01-driven individual fertility.
 
 Water drowning risk: +0.003/tick × (1 - waterExperience), while `_inWater` (mortality.rs). Inbreeding coeff >= 0.25 → baseRisk × 1.5 (>=, not >, so a full-sibling/parent-child mating's exact F=0.25 is caught).
 
-**Childhood cause split (under 15) is phenotype-sensitive, not a flat coin
-flip:** `determine_cause` (mortality.rs) used to split under-5s 55/45 and
-5-14s 65/35 between `trauma`/`genetic_disease` purely by age band, ignoring
-the child's own genetics entirely -- meaning improving a lineage's genetic
-quality (founder genome, generational selection) had zero effect on the age
-band that dominates most populations' total deaths (populations here rarely
-carry a large adult/elder cohort). The split is now:
+**`predator`/`injury`/`wildlife_encounter`/`exposure` are now mechanistic, not
+a probability roll:** these four used to be resolved by `determine_cause`
+(mortality.rs) as a narrative label for a death that an unrelated daily roll
+had *already* decided was happening -- with no requirement the individual
+had sustained any physical harm first, and no way to survive a dangerous
+encounter except by that roll missing entirely. `rust/sim-core/src/biology/wounds.rs`
+is now the sole source of all four: `maybe_inflict_wound` (called once per
+tick, only for individuals who already survived that unrelated roll) reuses
+the same `predator_risk`/`weather_cold_risk`/`weather_heat_risk` signals to
+probabilistically wound a survivor, tagging the wound with the circumstance
+that caused it at the moment of infliction. Every open wound drains `hp` in
+proportion to its current severity each tick and heals at a rate set by the
+individual's own `health_resilience`/`immune_strength` -- real genetic
+recovery capacity, not a flat timer. A single wound is deliberately
+survivable alone; wounds accumulate if inflicted faster than they heal, and
+if their combined severity drives `hp` to 0, `wound_collapse_cause` reports
+which of the four causes applies -- whichever open wound is currently most
+severe, using the circumstance it was tagged with at infliction. This is
+death as the natural consequence of a real physiological state crossing
+zero, not a probability roll independent of that state.
 
-```
-genetic_share = clamp(genetic_baseline + (0.5 - genetic_resistance)*0.3
-                                        - (0.5 - toughness)*0.2,
-                      0.1, 0.9)
-  genetic_baseline: 0.45 for age<5, 0.35 for age<15 (matches the original flat split)
-  genetic_resistance = (health_resilience + immune_strength) / 2
-  toughness = (endurance + physical_strength) / 2
-misadventure_share = 1 - genetic_share
-```
+`determine_cause` (mortality.rs) no longer resolves any of these four causes
+at all: under-15 deaths from its own roll always resolve to `genetic_disease`
+(the misadventure/genetic-disease phenotype-sensitive split that used to live
+here moved entirely to wounds.rs's own wound-vs-heal genetics); 15-45y
+deaths resolve to `birth_complications` (pregnant females, fertility-scaled
+chance) or `genetic_disease` otherwise; 45+ resolves to `old_age` or
+`genetic_disease`. `mortality::compute_daily_death_risk`'s own base_risk is
+reduced by a `NON_WOUND_CAUSE_SHARE` constant (0.65) to hand the portion of
+overall mortality these four causes used to represent over to wounds.rs
+instead of double-counting it -- see that constant's own doc comment in
+mortality.rs, and `tests/empirical_validation.rs` for the Monte Carlo harness
+that validates the resulting *combined* (roll_death + wound-collapse) rate
+empirically rather than trusting either estimate exactly. A stale
+`predator_risk` additive term that used to live directly inside
+`compute_daily_death_risk` (pre-dating wounds.rs) was removed for the same
+reason -- it double-counted predator danger once wounds.rs became the actual
+source of predator/wildlife/injury/exposure deaths.
 
-At population-average genetics (both terms = 0.5) this reduces exactly to
-the original flat split, so only a child whose own genetic_resistance or
-toughness diverges from average sees a different cause distribution --
-tying childhood mortality causes to the same two phenotype quantities the
-adult (15-45) branch already used.
-
-**"Misadventure" is resolved into a specific cause, never a generic bucket:**
-every non-water, non-starvation/dehydration, non-infection, non-old-age,
-non-genetic, non-birth-complication death used to be labeled the single
-catch-all `trauma`, regardless of what actually killed the individual.
-`mortality::resolve_misadventure` now resolves this into one of three
-specific causes from the environment signal actually available at the
-moment of death:
-1. `exposure` -- the current weather is actively dangerous
-   (`weather_cold_risk`/`weather_heat_risk`, environment.rs) -- hypothermia
-   or heatstroke.
-2. `wildlife_encounter` -- otherwise, a chance proportional to this biome's
-   `predator_risk` (bite/sting/goring from a non-apex animal, distinct from
-   an actual large-carnivore kill below).
-3. `injury` -- the residual physical mishap (fall, blunt injury, tool
-   accident) once neither of the above signals applies -- kept as narrow as
-   the available signals allow rather than an unexplained label.
-
-**The dedicated `predator` cause (an actual large-carnivore kill) is no
-longer dead code and no longer age-gated:** it used to require
-`predator_risk > 0.5`, but no biome in the Biomes table below ever reaches
-that (tropical_savanna tops out at exactly 0.50, and the check was a strict
-`>`), so it could never fire in any biome in the game -- and because this
-check ran before the age-band branches, no child or elder could ever be
-recorded as a predator kill even in principle. The threshold is now `> 0.35`
-(reachable in tropical_rainforest/tropical_savanna), and the check still
-runs before any age branching, so it now actually applies across every age
-band, not just 15-44.
+**Known calibration gap, found by the empirical validation harness and left
+for a follow-up investigation:** non-founder individuals in the 5-15y band
+measure meaningfully above their documented ~1%/yr target even after the
+above rework, traced to chronic cortisol elevation (mortality.rs's own
+`cortisol > 0.6` term) being far more common among juveniles than adults --
+a psychology.rs/hormones.rs stress-model issue, not a wounds.rs or
+mortality-formula-coefficient issue. See `empirical_validation.rs`'s own
+comments and mortality.rs's cortisol-term comment for the full finding.
 
 ## Biomes
 

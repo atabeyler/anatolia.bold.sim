@@ -65,14 +65,62 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
         0.00061
     };
 
+    // These per-age-band figures were calibrated (see the doc comment
+    // above) against a *total* mortality target that used to include
+    // Predator/Injury/WildlifeEncounter/Exposure deaths resolved right here
+    // by `determine_cause`'s own probability cascade. Those four causes now
+    // come exclusively from `wounds::wound_collapse_cause` -- a real,
+    // independent, physiologically-driven death check running alongside
+    // this one, not a relabeling of a fraction of *this* probability.
+    // Without this reduction, total mortality (this roll plus the new
+    // wound-collapse one) would run well above the calibrated target.
+    // NON_WOUND_CAUSE_SHARE estimates what fraction of overall mortality
+    // this roll should still represent now that those four causes moved
+    // elsewhere -- derived from determine_cause's old cascade weights
+    // (misadventure_weight ~0.30 for adults, ~0.55-0.65 for children, plus
+    // a smaller separate predator share), averaged and rounded to a single
+    // constant rather than re-deriving a precise per-age-band figure, since
+    // `empirical_validation.rs`'s Monte Carlo harness validates the
+    // resulting *combined* rate empirically rather than trusting this
+    // estimate exactly. Tune this (and wounds.rs's own infliction/severity
+    // constants) together against that harness if the combined rate drifts
+    // from the documented target.
+    const NON_WOUND_CAUSE_SHARE: f64 = 0.65;
+    base_risk *= NON_WOUND_CAUSE_SHARE;
+
     // Extinction guard: tiny bands receive outsized individual attention.
+    // Exempts the 0-1y band specifically: a real infant's own mortality risk
+    // doesn't fall just because the surrounding population is small -- the
+    // documented ~8%/yr target above already accounts for real prehistoric
+    // infant mortality, and a young colonizing population (the common case
+    // this simulation spends most of its early life in, and exactly where
+    // this guard would otherwise apply almost continuously) is not a reason
+    // to discount that specific risk. `empirical_validation.rs`'s Monte
+    // Carlo harness found this: the 0-1y band showed 0% emergent mortality
+    // across 276 observed person-years before this exemption, against the
+    // documented target, because this guard's up-to-4x discount compounded
+    // with the immune_strength/resilience discounts below pushed the
+    // effective rate an order of magnitude under target during exactly the
+    // population-size regime a real simulation run spends the most time in.
     let alive_count = environment.and_then(|env| env.get("alive_count")).and_then(|v| v.as_f64()).unwrap_or(100.0);
-    if alive_count < 25.0 {
+    if alive_count < 25.0 && age >= 1.0 {
         base_risk *= (alive_count / 25.0).max(0.25);
     }
 
-    // Thriving healthy adult: well-fed prime-years individuals get a discount.
-    if (15.0..45.0).contains(&age) && health.hp > 0.85 && health.calories > 0.7 {
+    // Thriving healthy individual: well-fed prime-years individuals get a
+    // discount. Covers 5-45y, not just 15-45y -- mortality.rs's own
+    // documented targets put the 5-15y and 15-45y bands at the *same* rate
+    // (~1%/yr each), both sourced from the same low-background-mortality
+    // "childhood past infancy through prime adulthood" segment of the
+    // Gurven & Kaplan life-table data this module cites, so a well-fed,
+    // uninjured individual should get the same real discount at 8 as at 25.
+    // Restricting this to 15+ left the 5-15y band with the same undiscounted
+    // base_risk as 15-45y but no way to reach its own equally-low target --
+    // `empirical_validation.rs`'s Monte Carlo harness caught this as a
+    // ~4-6x overshoot specific to 5-15y once the wound-collapse mechanism
+    // (wounds.rs) was ruled out as the cause (it contributes zero deaths to
+    // this band in practice).
+    if (5.0..45.0).contains(&age) && health.hp > 0.85 && health.calories > 0.7 {
         base_risk *= 0.4;
     }
 
@@ -119,19 +167,16 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
         base_risk += (individual.hormones.pth - 0.5) * 0.00004;
     }
 
-    // Predator risk is applied as a single term: a founder-scaled base
-    // contribution, modulated by toughness (a tougher individual cuts their
-    // own exposure by up to ~20% at max toughness; a frailer one raises it
-    // by the same amount). Kept in one block -- previously split across two
-    // separate `if let Some(env)` blocks with no cross-reference, which made
-    // it easy to edit one half without noticing the other existed.
-    let toughness = (phenotype.endurance + phenotype.physical_strength) / 2.0;
-    if let Some(env) = environment {
-        let predator_risk = env.get("predator_risk").and_then(Value::as_f64).unwrap_or(0.0);
-        let env_mult = if is_founder { 0.4 } else { 1.0 };
-        let toughness_reduction = (toughness - 0.5) * 0.4;
-        base_risk += predator_risk * 0.0002 * (env_mult - toughness_reduction);
-    }
+    // Predator danger used to add a direct term here (a founder/toughness-
+    // scaled contribution to whether *any* death happens this tick), with
+    // `determine_cause` resolving the actual cause (Predator/WildlifeEncounter)
+    // afterward. That resolution moved entirely to `wounds.rs`'s wound-
+    // infliction/accumulation/collapse mechanism (see this file's own
+    // `NON_WOUND_CAUSE_SHARE` doc comment), which already models predator
+    // danger as its own physiological process -- keeping this term here too
+    // double-counted the same danger twice: once deciding whether a death
+    // happens at all, and again in wound accrual. Removed; predator/wildlife
+    // risk to survival now flows exclusively through wounds.rs.
 
     if health.calories < 0.4 {
         base_risk *= 1.0 + (phenotype.metabolism - 0.5) * 0.2;
@@ -170,6 +215,26 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
     // that threshold cortisol contributes nothing extra here: a short-term
     // stress response is adaptive, not harmful, and psychology::update_mental_state
     // already accounts for stress's own direct HP cost separately.
+    //
+    // KNOWN CALIBRATION GAP (found by empirical_validation.rs's Monte Carlo
+    // harness, pre-existing, not introduced by the wound-collapse rewrite
+    // above): non-founder 5-15y individuals in practice run chronic cortisol
+    // high enough, often enough, that this one term alone contributes
+    // roughly 0.02/yr of extra mortality risk on top of everything else --
+    // more than the entire age band's ~0.01/yr documented target by itself,
+    // and the dominant reason that band's emergent mortality still measured
+    // ~3-4x over target even after every wound-collapse-related constant in
+    // this module was recalibrated. Direct instrumentation (bypassing the
+    // Monte Carlo harness to sample this specific quantity) found juveniles
+    // sit with cortisol averaging ~0.1 over this 0.6 threshold for a large
+    // fraction of their lives -- i.e. the psychology/hormones stress model
+    // itself keeps young non-founders chronically stressed far more than
+    // adults, not this term's own coefficient being wrong in isolation.
+    // Fixing that is a psychology.rs/hormones.rs stress-model investigation,
+    // out of scope for the wound-collapse work this module's other comments
+    // document -- left here as an accurate pointer for whoever picks it up
+    // next, rather than a blind coefficient tweak that would just mask a
+    // stress-model bug behind an unrelated mortality-formula discount.
     if individual.hormones.cortisol > 0.6 {
         base_risk += (individual.hormones.cortisol - 0.6) * 0.0006;
     }
@@ -214,7 +279,7 @@ fn has_lethal_infection(individual: &Individual) -> bool {
         .unwrap_or(false)
 }
 
-fn determine_cause(individual: &Individual, current_day: i32, environment: Option<&Value>) -> DeathCause {
+fn determine_cause(individual: &Individual, current_day: i32, _environment: Option<&Value>) -> DeathCause {
     let age = get_age(individual, current_day);
     let health = &individual.health;
     let phenotype = &individual.phenotype;
@@ -235,22 +300,25 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
     if age >= phenotype.max_lifespan - 5.0 {
         return DeathCause::OldAge;
     }
-    // A dedicated large-carnivore kill -- reachable at any age (this check
-    // runs before the age-band branches below), but only in biomes actually
-    // dangerous enough to plausibly host one. AGENTS.md's Biomes table tops
-    // out at tropical_savanna's 0.50 predator_risk; a strict `> 0.5` gate
-    // here used to mean this branch could never fire in any biome in the
-    // game, and (being above the age branches only in intent, not in code
-    // order before this fix) effectively meant no child or elder could ever
-    // be recorded as a predator kill either.
-    let predator_threshold = if is_founder { 0.15 } else { 0.3 };
-    let predator_risk = environment.and_then(|env| env.get("predator_risk")).and_then(Value::as_f64).unwrap_or(0.0);
-    if predator_risk > 0.35 && rand::random::<f64>() < predator_threshold {
-        return DeathCause::Predator;
-    }
 
-    // Founders never die of genetic disease -- the player designed their genome intentionally.
+    // Predator, Injury, WildlifeEncounter, and Exposure used to be resolved
+    // right here -- a narrative label picked by an internal probability
+    // roll for a death `roll_death`'s own daily risk had *already* decided
+    // was happening, with no requirement that the individual had actually
+    // sustained any physical harm first. That's the "a probability roll,
+    // not the natural consequence of a process" critique this rewrite
+    // answers: those four causes are now resolved exclusively by
+    // `wounds::wound_collapse_cause` (biology/wounds.rs), which only ever
+    // fires when an individual's own accumulated, genetics-modulated,
+    // healing-eligible open wounds have driven their hp to 0 -- a real,
+    // deterministic physiological outcome, not a coin flip layered under
+    // an unrelated daily death roll. `compute_daily_death_risk`'s own
+    // base_risk below is reduced (see `NON_WOUND_CAUSE_SHARE`) to hand the
+    // portion of overall mortality these four causes used to represent
+    // over to that mechanism instead of simply deleting it, so total
+    // mortality (validated in `empirical_validation.rs`) stays calibrated.
     let genetic_resistance = (phenotype.health_resilience + phenotype.immune_strength) / 2.0;
+    // Founders never die of genetic disease -- the player designed their genome intentionally.
     let genetic_chance = if is_founder { 0.0 } else { (0.30 - genetic_resistance * 0.30).max(0.0) };
 
     let birth_comp_chance = if individual.sex == "female" && health.pregnancy.is_some() {
@@ -259,62 +327,30 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
         0.0
     };
 
-    let toughness = (phenotype.endurance + phenotype.physical_strength) / 2.0;
-    let misadventure_weight = (0.30 - (toughness - 0.5) * 0.20).max(0.05);
-
-    // Young-age mortality used to split Trauma/GeneticDisease on a flat,
-    // age-band-only coin flip -- meaning a child's own genetic_resistance
-    // and toughness (already computed above for the adult branches below)
-    // had zero influence on the age band that produces most of a
-    // population's deaths. Reusing those same two phenotype-derived
-    // quantities here instead makes childhood mortality causes actually
-    // responsive to inherited/genetic quality, same as adulthood already
-    // is. At the population-average genetic_resistance/toughness (0.5),
-    // this reduces exactly to the original flat split (0.45/0.35 genetic
-    // share), so only a child whose own genetics diverge from average sees
-    // a different cause distribution.
-    if age < 5.0 || age < 15.0 {
-        let genetic_baseline = if age < 5.0 { 0.45 } else { 0.35 };
-        let genetic_share = (genetic_baseline + (0.5 - genetic_resistance) * 0.3 - (0.5 - toughness) * 0.2).clamp(0.1, 0.9);
-        return if rand::random::<f64>() < 1.0 - genetic_share { resolve_misadventure(environment) } else { DeathCause::GeneticDisease };
+    // Young-age mortality that isn't drowning/dehydration/starvation/
+    // infection/old-age/wound-collapse and isn't attributable to genetic
+    // disease has no remaining roll_death-resolvable category left --
+    // GeneticDisease is the residual "not otherwise explained" bucket here,
+    // same role it already plays as the adult/elder cascades' own fallback
+    // below. A child's genetic_resistance/toughness still meaningfully
+    // shape their *overall* survival odds (compute_daily_death_risk's own
+    // immune_strength/resilience discounts, plus wounds.rs's
+    // health_resilience/immune_strength-modulated healing rate) even though
+    // this specific label no longer splits on them directly.
+    if age < 15.0 {
+        return DeathCause::GeneticDisease;
     }
-
-    let founder_factor = if is_founder { 0.55 } else { 1.0 };
-    let adjusted_misadventure = misadventure_weight * founder_factor;
 
     if age < 45.0 {
         let r = rand::random::<f64>();
-        let misadventure_cut = adjusted_misadventure;
-        let birth_comp_cut = misadventure_cut + birth_comp_chance;
-        let genetic_cut = birth_comp_cut + genetic_chance;
-        // The leftover probability mass here only gets attributed to a
-        // predator kill in proportion to this environment's actual
-        // predator_risk -- a predator-free biome (e.g. coastal, risk 0.15)
-        // must not have every unattributed adult death blamed on a predator.
-        // Whatever isn't explained by real predator risk resolves through
-        // the same misadventure logic used for younger age bands.
-        let predator_cut = genetic_cut + (predator_risk * 0.3).max(0.0).min(1.0 - genetic_cut);
-        return if r < misadventure_cut {
-            resolve_misadventure(environment)
-        } else if r < birth_comp_cut {
-            DeathCause::BirthComplications
-        } else if r < genetic_cut {
-            DeathCause::GeneticDisease
-        } else if r < predator_cut {
-            DeathCause::Predator
-        } else {
-            resolve_misadventure(environment)
-        };
+        return if r < birth_comp_chance { DeathCause::BirthComplications } else { DeathCause::GeneticDisease };
     }
 
     let r = rand::random::<f64>();
     let old_age_cut = 0.20;
-    let misadventure_cut = old_age_cut + adjusted_misadventure;
-    let genetic_cut = misadventure_cut + genetic_chance;
+    let genetic_cut = old_age_cut + genetic_chance;
     if r < old_age_cut {
         DeathCause::OldAge
-    } else if r < misadventure_cut {
-        resolve_misadventure(environment)
     } else if r < genetic_cut {
         DeathCause::GeneticDisease
     } else {
@@ -334,7 +370,7 @@ fn determine_cause(individual: &Individual, current_day: i32, environment: Optio
 /// 3. Otherwise, a residual physical mishap (fall, blunt injury, tool
 ///    accident) -- kept as narrow as the available signals allow rather
 ///    than an unexplained bucket.
-fn resolve_misadventure(environment: Option<&Value>) -> DeathCause {
+pub(crate) fn resolve_misadventure(environment: Option<&Value>) -> DeathCause {
     if let Some(env) = environment {
         let cold_risk = env.get("weather_cold_risk").and_then(Value::as_bool).unwrap_or(false);
         let heat_risk = env.get("weather_heat_risk").and_then(Value::as_bool).unwrap_or(false);
@@ -584,7 +620,26 @@ mod tests {
         assert!(saw_dehydration);
     }
 
-    // ── young-age cause split now tracks genetic_resistance/toughness ────
+    // ── young-age cause resolution: misadventure moved to wounds.rs ──────
+    //
+    // determine_cause used to split under-15 deaths between GeneticDisease
+    // and a misadventure cause (Exposure/WildlifeEncounter/Injury) using a
+    // genetic_resistance/toughness-modulated share -- the tests this
+    // replaces (`an_under_five_with_average_genetics_matches_the_original_
+    // flat_split` and its siblings) exercised that split. Predator/Injury/
+    // WildlifeEncounter/Exposure are no longer resolved by determine_cause
+    // at any age (see this function's own doc comment) -- a young
+    // individual's genetic_resistance/toughness still meaningfully shape
+    // their *overall* survival odds via compute_daily_death_risk's
+    // immune_strength/resilience discounts and wounds.rs's own
+    // health_resilience/immune_strength-modulated healing rate, just not
+    // through this label-picking split anymore. What remains true and
+    // worth testing here is the simpler, current behavior: an under-15
+    // roll_death death always resolves to GeneticDisease, regardless of
+    // genetics -- the genetics-modulated survive-vs-succumb-to-a-wound
+    // split now lives in wounds.rs's own test suite instead
+    // (`sustained_wounding_faster_than_healing_can_drive_hp_to_zero` and
+    // the `wound_collapse_cause` tests).
 
     fn child_with(age_years: i32, health_resilience: f64, immune_strength: f64, endurance: f64, physical_strength: f64) -> Individual {
         let mut ind = make_ind(age_years);
@@ -593,65 +648,13 @@ mod tests {
         ind
     }
 
-    // `env(100.0)` sets no weather_cold_risk/weather_heat_risk/predator_risk
-    // fields, so `resolve_misadventure` always bottoms out at `Injury` here
-    // -- these tests only care about the genetic_share split, not which of
-    // the three misadventure sub-causes gets picked (see the dedicated
-    // `resolve_misadventure` tests below for that).
-    fn misadventure_share_over(ind: &Individual, trials: u32) -> f64 {
-        let mut misadventure = 0u32;
-        for _ in 0..trials {
-            match determine_cause(ind, 0, Some(&env(100.0))) {
-                DeathCause::Exposure | DeathCause::WildlifeEncounter | DeathCause::Injury => misadventure += 1,
-                DeathCause::GeneticDisease => {}
-                other => panic!("young-age death should only ever be a misadventure cause or GeneticDisease, got {other:?}"),
+    #[test]
+    fn an_under_fifteen_roll_death_always_resolves_to_genetic_disease_regardless_of_genetics() {
+        for ind in [child_with(2, 0.5, 0.5, 0.5, 0.5), child_with(10, 0.9, 0.9, 0.9, 0.9), child_with(10, 0.0, 0.0, 0.0, 0.0)] {
+            for _ in 0..200 {
+                assert_eq!(determine_cause(&ind, 0, Some(&env(100.0))), DeathCause::GeneticDisease);
             }
         }
-        misadventure as f64 / trials as f64
-    }
-
-    #[test]
-    fn an_under_five_with_average_genetics_matches_the_original_flat_split() {
-        let ind = child_with(2, 0.5, 0.5, 0.5, 0.5);
-        let share = misadventure_share_over(&ind, 20_000);
-        assert!((share - 0.55).abs() < 0.02, "population-average genetics should reproduce the original 0.55 misadventure share, got {share}");
-    }
-
-    #[test]
-    fn a_five_to_fifteen_with_average_genetics_matches_the_original_flat_split() {
-        let ind = child_with(10, 0.5, 0.5, 0.5, 0.5);
-        let share = misadventure_share_over(&ind, 20_000);
-        assert!((share - 0.65).abs() < 0.02, "population-average genetics should reproduce the original 0.65 misadventure share, got {share}");
-    }
-
-    #[test]
-    fn a_genetically_weak_under_five_dies_of_genetic_disease_more_often() {
-        let strong = child_with(2, 0.9, 0.9, 0.5, 0.5);
-        let weak = child_with(2, 0.1, 0.1, 0.5, 0.5);
-        let strong_share = misadventure_share_over(&strong, 20_000);
-        let weak_share = misadventure_share_over(&weak, 20_000);
-        assert!(weak_share < strong_share, "low genetic_resistance should raise the genetic_disease share (lower the misadventure share) relative to a genetically strong child");
-    }
-
-    #[test]
-    fn a_frail_child_dies_of_misadventure_more_often_than_a_tough_one() {
-        let tough = child_with(10, 0.5, 0.5, 0.9, 0.9);
-        let frail = child_with(10, 0.5, 0.5, 0.1, 0.1);
-        let tough_share = misadventure_share_over(&tough, 20_000);
-        let frail_share = misadventure_share_over(&frail, 20_000);
-        assert!(frail_share > tough_share, "low toughness (endurance/physical_strength) should raise the misadventure share relative to a tough child");
-    }
-
-    #[test]
-    fn the_genetic_disease_share_never_leaves_its_ten_to_ninety_percent_band() {
-        // Extreme genetics in both directions should still clamp, not
-        // invert or exceed the intended [0.1, 0.9] genetic_share band.
-        let extremely_strong = child_with(2, 1.0, 1.0, 1.0, 1.0);
-        let extremely_weak = child_with(2, 0.0, 0.0, 0.0, 0.0);
-        let strong_share = misadventure_share_over(&extremely_strong, 20_000);
-        let weak_share = misadventure_share_over(&extremely_weak, 20_000);
-        assert!(strong_share <= 0.90 + 0.02);
-        assert!(weak_share >= 0.10 - 0.02);
     }
 
     // ── resolve_misadventure sub-cause resolution ─────────────────────────
