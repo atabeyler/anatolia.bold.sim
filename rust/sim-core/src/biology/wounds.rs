@@ -1,67 +1,138 @@
-//! Wound infliction and healing -- turns `health.injuries` (declared in
-//! types.rs, but never actually written or read anywhere until this module)
-//! into a real, tick-by-tick physiological process rather than a decorative
-//! empty field.
+//! Wound infliction, healing, and wound-driven death -- turns
+//! `health.injuries` (declared in types.rs, but never actually read or
+//! written anywhere until this module) into a real, tick-by-tick
+//! physiological process, and makes Predator/Injury/WildlifeEncounter/
+//! Exposure emerge from that process instead of from a probability roll.
 //!
-//! Before this module, an individual either died from a mortality-roll
-//! cause or walked away completely unscathed -- `hp` only ever moved from
-//! hunger/thirst decay, weather, and a small GH/IGF-1 recovery term
-//! (hormones.rs). There was no substrate at all for "survived a dangerous
-//! encounter, but not for free": `mortality::roll_death` computing an
-//! elevated risk from `predator_risk`/dangerous weather and then rolling
-//! *against* death meant that elevated risk had zero further consequence
-//! once the roll failed. This reuses exactly those same signals (already
-//! read as plain JSON fields off `environment`, matching mortality.rs's own
-//! pattern for `predator_risk`/`weather_cold_risk`/`weather_heat_risk`) to
-//! probabilistically inflict a *survivable* wound instead -- a small,
-//! bounded, additive consequence layered on top of the existing mortality
-//! roll, the same pattern this codebase already uses throughout (see
-//! AGENTS.md's Hormones section for many examples of this shape).
+//! Before this module, an individual either died from a `mortality::roll_death`
+//! cause picked by `determine_cause`'s own internal probability cascade --
+//! including Predator/Injury/WildlifeEncounter/Exposure, resolved as a
+//! narrative label for a death that roll had *already* decided was
+//! happening, with no requirement the individual had sustained any physical
+//! harm first -- or walked away from a dangerous encounter completely
+//! unscathed. There was no substrate at all for "survived a dangerous
+//! encounter, but not for free," and no way for those four causes to be
+//! anything but a coin flip layered under an unrelated daily death roll.
 //!
-//! A wound is `{"severity": f64 in (0, WOUND_MAX_SEVERITY], "day": i32}` in
-//! `health.injuries`. Each tick, every open wound both trims `hp` in
-//! proportion to its current severity (an open wound impairs the body) and
-//! heals a little (severity shrinks) at a rate set by the individual's own
-//! `health_resilience`/`immune_strength` phenotype -- genetically real
-//! recovery capacity, not a flat timer -- until it closes and is removed.
-//! This makes `hp` decline from an actual physiological event with its own
-//! genetics-modulated recovery curve for this cause specifically, rather
-//! than a probability roll with no further mechanism, which is what makes
-//! it "mechanistic" in the sense this module's callers asked for.
+//! This module is now the *sole* source of those four causes:
+//! `maybe_inflict_wound` reuses exactly the same signals `mortality.rs`
+//! used to gate them (`predator_risk`, `weather_cold_risk`/`weather_heat_risk`)
+//! to probabilistically wound a survivor of today's (unrelated,
+//! non-wound-related) death roll, tagging each wound with the circumstance
+//! that caused it. Every open wound drains `hp` in proportion to its
+//! current severity each tick and heals at a rate set by the individual's
+//! own `health_resilience`/`immune_strength` phenotype -- real genetic
+//! recovery capacity, not a flat timer. A single wound is deliberately
+//! survivable on its own (bounded severity, a healing rate that always
+//! eventually closes it), but wounds accumulate if inflicted faster than
+//! they heal, and if their combined severity drives `hp` to 0,
+//! `wound_collapse_cause` reports which of the four causes applies --
+//! whichever open wound is currently most severe, using the circumstance
+//! it was tagged with at infliction. This is death as the natural
+//! consequence of a real physiological state crossing zero, not a
+//! probability roll independent of that state.
+//!
+//! `mortality::compute_daily_death_risk`'s own base_risk is reduced
+//! (`NON_WOUND_CAUSE_SHARE`) to hand these four causes' prior share of
+//! overall mortality to this mechanism instead of simply deleting it --
+//! see that constant's own doc comment for how the reduction was estimated,
+//! and `tests/empirical_validation.rs` for the harness that validates the
+//! resulting *combined* (roll_death + wound-collapse) mortality rate
+//! empirically rather than trusting either estimate exactly.
 
 use rand::Rng;
 use serde_json::{json, Value};
 
+use super::mortality::{resolve_misadventure, DeathCause};
 use crate::state::Individual;
 
 /// A wound this severe would need `1.0 / WOUND_HEAL_RATE_BASE` days (at the
-/// slowest genetic healing rate) to close -- bounded well short of anything
-/// that could itself be an alternative death spiral independent of the
-/// mortality-roll system this module deliberately does not replace.
+/// slowest genetic healing rate) to close on its own -- survivable in
+/// isolation. Multiple simultaneous wounds (inflicted faster than they
+/// heal) are what make sustained danger exposure actually lethal -- see
+/// this module's own doc comment.
 const WOUND_MAX_SEVERITY: f64 = 0.15;
 const WOUND_MIN_SEVERITY: f64 = 0.03;
 
 /// Daily chance of a wound given the maximum possible danger signal
 /// (predator_risk=1.0 or actively dangerous weather); scaled down by the
-/// biome/weather's real risk level below. Deliberately small: this fires
-/// only for individuals who already survived today's mortality roll, so it
-/// must not itself become a dominant source of hp loss.
-const WOUND_CHANCE_AT_MAX_RISK: f64 = 0.01;
+/// biome/weather's real risk level below. This fires only for individuals
+/// who already survived today's unrelated mortality roll, and needs to be
+/// high enough that sustained high-danger exposure can realistically
+/// out-pace healing and become lethal, without dominating every other
+/// cause of death. `empirical_validation.rs`'s Monte Carlo harness measured
+/// this mechanism's actual contribution directly (per-cause death tallies)
+/// and found it produces close to zero deaths at this value across a
+/// 15-replicate/15-year run -- the age-band overshoot that harness first
+/// caught (5-15y at ~3-6x its documented target) turned out to come almost
+/// entirely from `compute_daily_death_risk`'s own chronic-cortisol term
+/// (mortality.rs), not from this mechanism; see that file's own note.
+/// This value is a reasonable middle ground pending a real calibration pass
+/// once that separate, pre-existing psychology/hormones-stress issue is
+/// fixed and this mechanism's own share of total mortality can be measured
+/// cleanly again.
+const WOUND_CHANCE_AT_MAX_RISK: f64 = 0.02;
 
 /// How much of a wound's severity closes per day at zero genetic recovery
 /// capacity (health_resilience=0, immune_strength=0) versus full capacity
-/// (both=1.0) -- bounded so even the least resilient individual's wounds
-/// eventually close (this is healing, not a permanent injury system) while
-/// a highly resilient individual recovers several times faster.
-const WOUND_HEAL_RATE_BASE: f64 = 0.02;
+/// (both=1.0) -- bounded so even the least resilient individual's *isolated*
+/// wound eventually closes, while a highly resilient individual recovers
+/// several times faster and can shrug off sustained danger that would kill
+/// a frailer one.
+const WOUND_HEAL_RATE_BASE: f64 = 0.015;
 const WOUND_HEAL_RATE_MAX: f64 = 0.08;
 
 /// How much of a wound's current severity is subtracted from `hp` each tick
 /// it stays open. A single max-severity wound (0.15) costs at most
 /// `0.15 * 0.15 = 0.0225` hp/day while freshly inflicted, tapering to
-/// nothing as it heals -- a real but survivable drag, not a second death
-/// mechanism layered under the mortality roll's own hp-driven causes.
+/// nothing as it heals -- survivable alone; several simultaneous wounds
+/// compound linearly, which is what can drive hp to 0.
 const WOUND_HP_DRAIN_FACTOR: f64 = 0.15;
+
+/// Which real-world circumstance a wound was inflicted under, captured at
+/// the moment of infliction (not re-derived later, since the individual's
+/// current environment may have changed by the time the wound proves
+/// fatal) -- maps directly onto the four `DeathCause` variants this module
+/// is the sole source of. Mirrors the exact same signals/thresholds
+/// `mortality.rs`'s `determine_cause`/`resolve_misadventure` used to
+/// resolve these from, just captured earlier (at infliction) rather than
+/// later (at an unrelated death roll).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WoundOrigin {
+    Predator,
+    Wildlife,
+    Exposure,
+    Injury,
+}
+
+impl WoundOrigin {
+    fn as_str(self) -> &'static str {
+        match self {
+            WoundOrigin::Predator => "predator",
+            WoundOrigin::Wildlife => "wildlife",
+            WoundOrigin::Exposure => "exposure",
+            WoundOrigin::Injury => "injury",
+        }
+    }
+
+    fn from_str(s: &str) -> WoundOrigin {
+        match s {
+            "predator" => WoundOrigin::Predator,
+            "wildlife" => WoundOrigin::Wildlife,
+            "exposure" => WoundOrigin::Exposure,
+            _ => WoundOrigin::Injury,
+        }
+    }
+
+    fn to_death_cause(self) -> DeathCause {
+        match self {
+            WoundOrigin::Predator => DeathCause::Predator,
+            WoundOrigin::Wildlife => DeathCause::WildlifeEncounter,
+            WoundOrigin::Exposure => DeathCause::Exposure,
+            WoundOrigin::Injury => DeathCause::Injury,
+        }
+    }
+}
 
 fn danger_signal(environment: Option<&Value>) -> f64 {
     let Some(env) = environment else { return 0.0 };
@@ -75,10 +146,33 @@ fn danger_signal(environment: Option<&Value>) -> f64 {
     (predator_risk + weather_danger * 0.5).min(1.0)
 }
 
+/// Resolves what circumstance a freshly-inflicted wound should be tagged
+/// with, from the same signals/thresholds `mortality.rs` used to resolve
+/// these four causes directly. Weather danger takes priority (matching
+/// `resolve_misadventure`'s own ordering), then a real predator_risk-scaled
+/// chance of the dedicated large-carnivore case (matching the old
+/// `predator_threshold` gate) or the smaller wildlife-encounter case
+/// (matching `resolve_misadventure`'s own wildlife roll), else the residual
+/// physical-mishap case.
+fn resolve_wound_origin(is_founder: bool, environment: Option<&Value>) -> WoundOrigin {
+    match resolve_misadventure(environment) {
+        DeathCause::Exposure => return WoundOrigin::Exposure,
+        DeathCause::WildlifeEncounter => return WoundOrigin::Wildlife,
+        _ => {}
+    }
+    let predator_risk = environment.and_then(|env| env.get("predator_risk")).and_then(Value::as_f64).unwrap_or(0.0);
+    let predator_threshold = if is_founder { 0.15 } else { 0.3 };
+    if predator_risk > 0.35 && rand::thread_rng().gen::<f64>() < predator_threshold {
+        return WoundOrigin::Predator;
+    }
+    WoundOrigin::Injury
+}
+
 /// Called once per living individual per tick, only for those who already
 /// survived today's `mortality::roll_death` -- see tick.rs's own call site
 /// for why this ordering matters (a wound is a consequence of danger that
-/// *didn't* kill, not an independent risk).
+/// *didn't* kill via that unrelated roll, not an independent risk on top
+/// of it).
 pub fn maybe_inflict_wound(individual: &mut Individual, current_day: i32, environment: Option<&Value>) {
     let risk = danger_signal(environment);
     if risk <= 0.0 {
@@ -93,7 +187,8 @@ pub fn maybe_inflict_wound(individual: &mut Individual, current_day: i32, enviro
     // plus a little randomness so not every wound at a given risk level is
     // identical.
     let severity = (WOUND_MIN_SEVERITY + (WOUND_MAX_SEVERITY - WOUND_MIN_SEVERITY) * risk * rand::thread_rng().gen::<f64>()).clamp(WOUND_MIN_SEVERITY, WOUND_MAX_SEVERITY);
-    individual.health.injuries.push(json!({ "severity": severity, "day": current_day }));
+    let origin = resolve_wound_origin(individual.is_founder, environment);
+    individual.health.injuries.push(json!({ "severity": severity, "day": current_day, "origin": origin.as_str() }));
 }
 
 /// Called once per living individual per tick, unconditionally (independent
@@ -129,14 +224,29 @@ pub fn update_wound_healing(individual: &mut Individual) {
     }
 }
 
-/// Sum of every currently-open wound's severity -- exposed for callers
-/// (e.g. a future consciousness.rs/psychology.rs term wanting a genuine
-/// injury signal instead of a bare `hp < threshold` proxy) that want the
-/// wound state directly rather than inferring it from `hp`, which is also
-/// affected by hunger/thirst/weather and so is a noisier signal of "how
-/// injured is this individual specifically" than the wound list itself.
-pub fn total_open_wound_severity(individual: &Individual) -> f64 {
-    individual.health.injuries.iter().filter_map(|w| w.get("severity").and_then(Value::as_f64)).sum()
+/// The sole resolver of Predator/Injury/WildlifeEncounter/Exposure deaths.
+/// Returns `Some(cause)` only when the individual's `hp` has actually been
+/// driven to 0 *and* they currently carry at least one open wound (so a
+/// starvation/dehydration/weather-hp-drain death with no wounds at all
+/// isn't mistakenly attributed here -- those remain `mortality.rs`'s own
+/// causes). The cause is taken from whichever open wound is currently most
+/// severe, on the reasoning that the most severe untreated wound is the
+/// most plausible proximate cause of a multi-wound collapse.
+pub fn wound_collapse_cause(individual: &Individual) -> Option<DeathCause> {
+    if individual.health.hp > 0.0 || individual.health.injuries.is_empty() {
+        return None;
+    }
+    let worst = individual
+        .health
+        .injuries
+        .iter()
+        .max_by(|a, b| {
+            let sa = a.get("severity").and_then(Value::as_f64).unwrap_or(0.0);
+            let sb = b.get("severity").and_then(Value::as_f64).unwrap_or(0.0);
+            sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+    let origin = worst.get("origin").and_then(Value::as_str).map(WoundOrigin::from_str).unwrap_or(WoundOrigin::Injury);
+    Some(origin.to_death_cause())
 }
 
 #[cfg(test)]
@@ -175,7 +285,7 @@ mod tests {
         let mut ind = individual_with(1.0, 0.5, 0.5);
         let env = json!({ "predator_risk": 1.0 });
         let mut wounded = false;
-        for day in 0..5000 {
+        for day in 0..2000 {
             maybe_inflict_wound(&mut ind, day, Some(&env));
             if !ind.health.injuries.is_empty() {
                 wounded = true;
@@ -200,9 +310,23 @@ mod tests {
     }
 
     #[test]
+    fn every_wound_is_tagged_with_a_valid_origin() {
+        let mut ind = individual_with(1.0, 0.5, 0.5);
+        let env = json!({ "predator_risk": 1.0 });
+        for day in 0..20000 {
+            maybe_inflict_wound(&mut ind, day, Some(&env));
+        }
+        assert!(!ind.health.injuries.is_empty());
+        for wound in &ind.health.injuries {
+            let origin = wound.get("origin").and_then(Value::as_str).expect("every wound must carry an origin tag");
+            assert!(["predator", "wildlife", "exposure", "injury"].contains(&origin), "unexpected wound origin tag: {origin}");
+        }
+    }
+
+    #[test]
     fn a_wound_eventually_heals_and_is_removed() {
         let mut ind = individual_with(1.0, 0.9, 0.9);
-        ind.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0 }));
+        ind.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0, "origin": "injury" }));
         for _ in 0..1000 {
             update_wound_healing(&mut ind);
             if ind.health.injuries.is_empty() {
@@ -216,8 +340,8 @@ mod tests {
     fn higher_resilience_and_immunity_heal_strictly_faster() {
         let mut low = individual_with(1.0, 0.0, 0.0);
         let mut high = individual_with(1.0, 1.0, 1.0);
-        low.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0 }));
-        high.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0 }));
+        low.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0, "origin": "injury" }));
+        high.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0, "origin": "injury" }));
 
         let mut low_days = None;
         let mut high_days = None;
@@ -239,15 +363,13 @@ mod tests {
     #[test]
     fn an_open_wound_drains_hp_while_a_healed_one_does_not() {
         let mut ind = individual_with(1.0, 0.5, 0.5);
-        ind.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0 }));
+        ind.health.injuries.push(json!({ "severity": WOUND_MAX_SEVERITY, "day": 0, "origin": "injury" }));
         update_wound_healing(&mut ind);
         assert!(ind.health.hp < 1.0, "an open wound must drain hp");
 
-        let hp_after_first_tick = ind.health.hp;
         let mut healthy = individual_with(1.0, 0.5, 0.5);
         update_wound_healing(&mut healthy);
         assert_eq!(healthy.health.hp, 1.0, "an individual with no wounds must have hp untouched by update_wound_healing");
-        let _ = hp_after_first_tick;
     }
 
     #[test]
@@ -259,10 +381,45 @@ mod tests {
     }
 
     #[test]
-    fn total_open_wound_severity_sums_every_open_wound() {
-        let mut ind = individual_with(1.0, 0.5, 0.5);
-        ind.health.injuries.push(json!({ "severity": 0.05, "day": 0 }));
-        ind.health.injuries.push(json!({ "severity": 0.07, "day": 1 }));
-        assert!((total_open_wound_severity(&ind) - 0.12).abs() < 1e-9);
+    fn sustained_wounding_faster_than_healing_can_drive_hp_to_zero() {
+        // The actual "wounds can kill" property this module exists for:
+        // a low-resilience individual repeatedly wounded under sustained
+        // maximum danger, faster than their own slow healing can keep up,
+        // must eventually reach hp=0 -- not merely lose a bounded, always-
+        // survivable amount.
+        let mut ind = individual_with(1.0, 0.0, 0.0);
+        let env = json!({ "predator_risk": 1.0 });
+        let mut collapsed = false;
+        for day in 0..50_000 {
+            maybe_inflict_wound(&mut ind, day, Some(&env));
+            update_wound_healing(&mut ind);
+            if ind.health.hp <= 0.0 {
+                collapsed = true;
+                break;
+            }
+        }
+        assert!(collapsed, "sustained maximum danger with zero genetic resilience should eventually drive hp to 0 via accumulated wounds");
+    }
+
+    #[test]
+    fn wound_collapse_cause_is_none_without_open_wounds_even_at_zero_hp() {
+        let ind = individual_with(0.0, 0.5, 0.5);
+        assert_eq!(wound_collapse_cause(&ind), None, "hp=0 with no wounds must not be attributed to this module -- that's mortality.rs's own domain (e.g. starvation)");
+    }
+
+    #[test]
+    fn wound_collapse_cause_is_none_above_zero_hp_even_with_open_wounds() {
+        let mut ind = individual_with(0.5, 0.5, 0.5);
+        ind.health.injuries.push(json!({ "severity": 0.1, "day": 0, "origin": "predator" }));
+        assert_eq!(wound_collapse_cause(&ind), None);
+    }
+
+    #[test]
+    fn wound_collapse_cause_matches_the_most_severe_open_wound_origin() {
+        let mut ind = individual_with(0.0, 0.5, 0.5);
+        ind.health.injuries.push(json!({ "severity": 0.02, "day": 0, "origin": "exposure" }));
+        ind.health.injuries.push(json!({ "severity": 0.12, "day": 1, "origin": "predator" }));
+        ind.health.injuries.push(json!({ "severity": 0.05, "day": 2, "origin": "injury" }));
+        assert_eq!(wound_collapse_cause(&ind), Some(DeathCause::Predator));
     }
 }

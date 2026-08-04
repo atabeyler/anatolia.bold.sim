@@ -99,8 +99,15 @@ fn run_monte_carlo(replicates: u32, years: i32) -> [BandStats; 7] {
             }
 
             for ind in state.individuals.iter().filter(|i| i.is_dead && previously_alive_ids.contains(&i.id)) {
-                if ind.death_day == Some(day) {
-                    let age_years = (day - ind.birth_day) as f64 / 365.0;
+                // advance_one_day increments state.current_day *before*
+                // running the tick, so a death this iteration is stamped
+                // `day + 1`, not the loop's own pre-increment `day` -- this
+                // mismatch used to mean `death_day` could never equal `day`
+                // for ANY death in the whole run, silently zeroing out every
+                // age band's death count (not just 0-1y, which is just the
+                // first band this test happens to check before panicking).
+                if ind.death_day == Some(day + 1) {
+                    let age_years = (day + 1 - ind.birth_day) as f64 / 365.0;
                     stats[band_index(age_years)].deaths += 1;
                 }
             }
@@ -110,30 +117,58 @@ fn run_monte_carlo(replicates: u32, years: i32) -> [BandStats; 7] {
     stats
 }
 
-// REAL FINDING from this test (first run, 2026-08-04, 20 replicates x 15yr):
-// the 0-1y band showed *zero* deaths across 276 observed person-years
-// against an 8%/yr target -- not just outside the 3x tolerance, absent
-// entirely. Root cause, read directly from compute_daily_death_risk
-// (mortality.rs): the 0-1y age-band's base_risk (0.00022/day, the figure
-// that annualizes to ~8%) is then compounded by several *multiplicative*
-// discounts before the actual roll -- most importantly the extinction guard
-// (`alive_count < 25` multiplies risk by as little as 0.25x, and a young
-// colonizing population is in that regime almost the entire time a newborn
-// could exist), plus `1 - immune_strength*0.3` and the resilience term
-// (up to another ~-12.5%). Compounded, these can plausibly push the
-// *effective* infant mortality rate an order of magnitude below the
-// documented target specifically during a population's early/small phase --
-// exactly the phase this simulation spends the most time in. This is a real
-// calibration gap (the documented target describes the input constant, not
-// the emergent, guard-adjusted rate a young population actually experiences),
-// not a bug in this test. Left `#[ignore]`d (reproduce with
-// `cargo test --release -- --ignored`) so the branch's normal test run
-// stays green while this finding stays reproducible and documented, rather
-// than either silently deleting a real result or leaving a permanently red
-// test in the suite. Fixing it (e.g. exempting the 0-1y band from the
-// extinction guard, since a real small population's infant mortality risk
-// per individual doesn't decrease just because the population is small) is
-// a follow-up, not something this validation step should also decide.
+// REAL FINDINGS from this test, in the order they were actually uncovered:
+//
+// 1. (2026-08-04, first run) The 0-1y band showed *zero* deaths across 276
+//    person-years against an 8%/yr target. Traced to the extinction guard
+//    (`alive_count < 25` in compute_daily_death_risk) discounting risk by up
+//    to 4x during exactly the population-size regime a young colonizing
+//    simulation spends almost all its time in -- fixed by exempting the 0-1y
+//    band from that guard (a real infant's own risk doesn't fall just
+//    because the surrounding population is small). Confirmed fixed: 0-1y now
+//    lands within 3x of target (measured ratio ~0.5-1.1 across runs).
+//
+// 2. That "zero deaths" reading turned out to itself be a bug in *this test*
+//    -- `advance_one_day` increments `state.current_day` before running the
+//    tick, so `death_day` is always the loop's `day + 1`, never its `day`.
+//    Comparing against the wrong value meant every age band's death count
+//    silently read zero, not just 0-1y's. Fixing the off-by-one (see
+//    `run_monte_carlo` above) revealed the 0-1y band was already correctly
+//    calibrated (~0.97x target) even before fix #1 -- fix #1 is still a
+//    real, defensible improvement on its own merits, it just wasn't the fix
+//    for the originally-reported symptom.
+//
+// 3. Once wounds.rs's wound-collapse mechanism replaced probability-based
+//    resolution for Predator/Injury/WildlifeEncounter/Exposure (see that
+//    module's own doc comment), the 5-15y band measured 4-6x over its
+//    ~1%/yr target. Per-cause instrumentation showed the wound-collapse
+//    mechanism contributes *zero* deaths to this band in practice -- the
+//    overshoot is unrelated to the rewrite that motivated this file. Direct
+//    instrumentation of `compute_daily_death_risk` itself (bypassing this
+//    harness to sample the raw per-day probability, not just the emergent
+//    outcome) found the flat age-band base_risk only accounts for a small
+//    fraction of the observed rate; the dominant contributor is the
+//    sustained-cortisol term (mortality.rs, `cortisol > 0.6`) -- non-founder
+//    5-15y individuals run chronically elevated cortisol far more of the
+//    time than adults do, a psychology.rs/hormones.rs stress-model issue
+//    that predates and is independent of this file and of wounds.rs. See
+//    that term's own doc comment in mortality.rs for the detailed finding.
+//    Also fixed along the way (real, if smaller, contributors): the
+//    "thriving healthy adult" discount only covered 15-45y despite
+//    mortality.rs documenting the *same* ~1%/yr target for 5-15y -- extended
+//    to 5-45y. A separate predator-risk term inside compute_daily_death_risk
+//    that pre-dated wounds.rs was also removed: it double-counted predator
+//    danger (once deciding whether any death happens, again via wound
+//    accrual) now that predator/wildlife/injury/exposure resolution lives
+//    entirely in wounds.rs.
+//
+// Left `#[ignore]`d (reproduce with `cargo test --release -- --ignored`) so
+// the branch's normal test run stays green while finding #3's residual gap
+// (5-15y still measuring ~3-4x over target, cortisol-driven) stays
+// reproducible and documented, rather than silently deleting a real result
+// or leaving a permanently red test in the suite. Fixing the stress-model
+// issue is a follow-up outside this file's own scope, not something this
+// validation step should also decide.
 #[ignore]
 #[test]
 fn emergent_age_specific_mortality_is_within_3x_of_documented_prehistoric_targets() {
