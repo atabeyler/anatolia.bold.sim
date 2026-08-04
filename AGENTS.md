@@ -1265,6 +1265,11 @@ engineer would write them.
 All development directly on `main` → push → Render auto-deploys (`render.yaml`'s
 `autoDeployTrigger: commit` rebuilds the `anatolia-sim` web service on every push to `main`).
 
+**Always ask the owner for explicit approval before running `git push` to
+`main`** (or any other remote branch) — even though `main` is the only
+branch this project ever pushes to, a push is not to be treated as
+pre-authorized. Commit locally as normal, then stop and ask before pushing.
+
 **`render.yaml`'s `buildFilter.ignoredPaths`** (root markdown docs, `desktop/**`,
 `client/android/**`, `.github/**`) skips a rebuild for pushes that touch only those paths -- none of
 which the root `build` script (`npm run build`: `build:wasm` + `client/` + `cargo build -p
