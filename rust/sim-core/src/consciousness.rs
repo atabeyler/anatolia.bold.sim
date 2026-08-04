@@ -176,10 +176,14 @@ fn record_life_log_milestones(ind: &mut Individual, sim_day: i32, thought: Optio
 /// term's contribution after the fact (invalid here specifically because
 /// the clamp makes the formula non-linear across many ticks: removing a
 /// positive term can change whether/when a trajectory hits its ceiling).
-/// `update_consciousness` is a thin wrapper around this that behaves
-/// identically to before this struct existed -- verified by
-/// `consciousness_never_exceeds_its_genetic_ceiling` and this module's other
-/// existing tests, none of which needed to change.
+/// `update_consciousness` is a thin wrapper that applies this struct's sum
+/// and the genetic ceiling clamp -- `consciousness_never_exceeds_its_genetic_ceiling`
+/// and this module's other pre-existing tests still pass unchanged, since
+/// this extraction itself doesn't alter the clamp or the sum. (The bonus
+/// terms' own values *do* now additionally depend on genetics via
+/// `genetic_responsiveness_multiplier` below -- see that function's doc
+/// comment -- which is a deliberate behavior change, not a side effect of
+/// this extraction.)
 pub struct ConsciousnessDelta {
     pub base_rate: f64,
     pub lang_bonus: f64,
@@ -195,14 +199,49 @@ impl ConsciousnessDelta {
     }
 }
 
+/// How strongly language stage, group membership, and theory of mind
+/// translate into consciousness growth used to be three flat constants
+/// (0.0005, 0.0002, 0.0003) -- identical for every individual regardless of
+/// their own genetics, which is the opposite of the cardinal rule's spirit:
+/// everything else in this formula (consciousness_potential itself) already
+/// varies per-individual by genome, but how *effectively* an individual
+/// turns language/social/empathic capacity into consciousness didn't.
+///
+/// This makes that responsiveness itself a heritable trait -- without
+/// adding new genome loci (the 32-locus genome is a headline number
+/// documented across the client UI, AGENTS.md, and this crate's own tests;
+/// adding to it is a much larger, separate change). Instead each multiplier
+/// reuses a phenotype trait *already* derived from an existing locus that is
+/// the real biological substrate for that specific bonus:
+///   - lang_bonus scales with `language_capacity` (FOXP2_01/CNTNAP2_01) --
+///     the literal genes this formula's lang_bonus term is named after.
+///   - social_bonus scales with `oxytocin_sensitivity` (OXTR_01) -- the real
+///     receptor-sensitivity gene behind social/pair bonding in this engine's
+///     own hormones.rs.
+///   - tom_bonus scales with `self_awareness` (NRXN1_01/SHANK3_01/RELN_01
+///     composite) -- RELN_01 is literally annotated `"theory_of_mind"` in
+///     genome.rs's own locus table.
+/// Each multiplier is bounded to 0.5x-1.5x (a below-average-genetics
+/// individual is never fully zeroed out, an above-average one is never
+/// unboundedly amplified), the same "small, bounded, additive/multiplicative
+/// layered on top of the existing formula" pattern this codebase already
+/// uses throughout (see AGENTS.md's Hormones section for numerous examples)
+/// rather than replacing the hand-picked base weights outright.
+fn genetic_responsiveness_multiplier(trait_value: f64) -> f64 {
+    0.5 + trait_value.clamp(0.0, 1.0)
+}
+
 pub fn compute_consciousness_delta(ind: &Individual) -> ConsciousnessDelta {
     let potential = ind.phenotype.consciousness_potential;
     let hp = ind.health.hp;
+    let lang_multiplier = genetic_responsiveness_multiplier(ind.phenotype.language_capacity);
+    let social_multiplier = genetic_responsiveness_multiplier(ind.phenotype.oxytocin_sensitivity);
+    let tom_multiplier = genetic_responsiveness_multiplier(ind.phenotype.self_awareness);
     ConsciousnessDelta {
         base_rate: (potential * 0.001).max(0.00015),
-        lang_bonus: ind.language.stage as f64 / 6.0 * 0.0005,
-        social_bonus: if ind.group_id.is_some() { 0.0002 } else { 0.0 },
-        tom_bonus: ind.psychology.theory_of_mind as f64 / 3.0 * 0.0003,
+        lang_bonus: ind.language.stage as f64 / 6.0 * 0.0005 * lang_multiplier,
+        social_bonus: (if ind.group_id.is_some() { 0.0002 } else { 0.0 }) * social_multiplier,
+        tom_bonus: ind.psychology.theory_of_mind as f64 / 3.0 * 0.0003 * tom_multiplier,
         stress_penalty: ind.psychology.stress_level * 0.0003,
         injury_penalty: if hp < 0.3 { (0.3 - hp) * 0.002 } else { 0.0 },
     }
