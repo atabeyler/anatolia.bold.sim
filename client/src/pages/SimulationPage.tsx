@@ -279,6 +279,7 @@ export default function SimulationPage() {
   const [speedBusy, setSpeedBusy] = useState(false);
   const [endModal, setEndModal] = useState<{ mode: 'natural' | 'manual'; reason?: string } | null>(null);
   const [ffTarget, setFfTarget] = useState('');
+  const [ffError, setFfError] = useState('');
   const [simNotFound, setSimNotFound] = useState(false);
   const [introTarget, setIntroTarget] = useState<{ lat: number; lon: number } | null>(() => {
     const navTarget = (location.state as any)?.introTarget;
@@ -611,8 +612,13 @@ export default function SimulationPage() {
   async function startFastForward() {
     const yr = parseInt(ffTarget);
     if (!yr || yr < 1 || !currentSim || !accessToken) return;
+    setFfError('');
     setFfTarget('');
-    await axios.post(`/api/simulations/${currentSim.id}/fast-forward`, { target_year: yr }, { headers: { Authorization: `Bearer ${accessToken}` } }).catch(() => {});
+    try {
+      await axios.post(`/api/simulations/${currentSim.id}/fast-forward`, { target_year: yr }, { headers: { Authorization: `Bearer ${accessToken}` } });
+    } catch (err: any) {
+      setFfError(err?.response?.data?.error ?? text(lang as LangCode, { tr: 'Bilinmeyen hata', en: 'Unknown error', de: 'Unbekannter Fehler', fr: 'Erreur inconnue', ar: 'خطأ غير معروف' }));
+    }
   }
 
   async function cancelFastForward() {
@@ -1262,14 +1268,19 @@ export default function SimulationPage() {
                       <input
                         type="number" min={1}
                         value={ffTarget}
-                        onChange={e => setFfTarget(e.target.value)}
+                        onChange={e => { setFfTarget(e.target.value); if (ffError) setFfError(''); }}
                         onKeyDown={e => { if (e.key === 'Enter') startFastForward(); }}
                         placeholder={text(lang as LangCode, { tr: 'Yıl', en: 'Year', de: 'Jahr', fr: 'Année', ar: 'سنة' })}
-                        style={{ flex: 1, fontSize: 11, padding: '3px 4px', background: 'transparent', border: '1px solid rgba(160,200,176,0.3)', color: '#a0c8b0', fontFamily: 'Share Tech Mono, monospace', outline: 'none', minWidth: 0 }}
+                        style={{ flex: 1, fontSize: 11, padding: '3px 4px', background: 'transparent', border: `1px solid ${ffError ? 'rgba(224,90,90,0.6)' : 'rgba(160,200,176,0.3)'}`, color: '#a0c8b0', fontFamily: 'Share Tech Mono, monospace', outline: 'none', minWidth: 0 }}
                       />
                       <button onClick={startFastForward} style={{ padding: '3px 6px', fontSize: 11, border: '1px solid rgba(212,168,56,0.5)', color: '#d4a838', background: 'rgba(212,168,56,0.08)', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer', flexShrink: 0 }}>
                         ⚡
                       </button>
+                    </div>
+                  )}
+                  {ffError && (
+                    <div style={{ fontSize: 10, color: '#e05a5a', letterSpacing: '0.04em', marginTop: 4, lineHeight: 1.3 }}>
+                      {ffError}
                     </div>
                   )}
                 </div>

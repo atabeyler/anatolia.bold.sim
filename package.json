@@ -1,6 +1,6 @@
 {
   "name": "anatolia-sim",
-  "version": "2.5.41",
+  "version": "2.5.42",
   "private": true,
   "engines": {
     "node": ">=18"
