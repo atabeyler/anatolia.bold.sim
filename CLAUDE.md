@@ -1512,3 +1512,28 @@ OPENAI_API_KEY=sk-proj-aRPp4xW6RwxC9GC1OkBr6Af5VaX6MKIfG9lVozM-4IdiioGcLBT-1XS9k
 OPENROUTER_API_KEY=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
 RESEND_API_KEY=re_13qLyamh_LZtPvjg5A5bHUnjB39e42C5z
 ```
+
+## Login Credentials (Render dashboard + in-app admin)
+
+Same rationale/scope as the two backups above (private repo, single
+collaborator) — kept here purely so these don't need to be re-supplied each
+session.
+
+**Render dashboard** (dashboard.render.com):
+```
+email: info@boldkimya.com.tr
+password: 1610damlA.
+```
+
+**In-app admin login** (same credentials as `ADMIN_USER_CODE`/`ADMIN_PASSWORD`
+above):
+```
+code: BOLD
+password: 1610damlA.
+```
+
+When asked to test a change, actually drive the running app in a real
+browser (e.g. via Playwright against a local dev server or the deployed
+Render URL) using these credentials, rather than only relying on type
+checks/test suites — consistent with this file's own "For UI or frontend
+changes... test in a browser" instruction above.
