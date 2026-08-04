@@ -41,9 +41,12 @@ pushed to `origin` — so never run `git push` (or `git push -u origin
 and push there.
 
 Instead: commit locally as usual, then push straight to `main`
-(`git push origin main`), per AGENTS.md's own Branch Strategy. The owner
-has given standing permission for this direct-to-`main` push — no need to
-ask again each session. This isn't just cosmetic: GitHub's repo Activity
+(`git push origin main`), per AGENTS.md's own Branch Strategy — but ask the
+owner for explicit approval before actually running that push each time
+(see Branch Strategy below); the owner's standing permission only covers
+*which* branch is the right target (`main`, never the session's own
+assigned branch), not skipping confirmation before the push itself. This
+isn't just cosmetic: GitHub's repo Activity
 feed permanently logs every branch push/delete and can't be purged
 afterward, so the only real fix is to never let that branch reach `origin`
 in the first place. Pushing it and deleting it afterward still leaves a
@@ -1336,6 +1339,14 @@ engineer would write them.
 
 All development directly on `main` → push → Render auto-deploys (`render.yaml`'s
 `autoDeployTrigger: commit` rebuilds the `anatolia-sim` web service on every push to `main`).
+
+**Always ask the owner for explicit approval before running `git push` to
+`main`** (or any other remote branch) — this supersedes the "no need to ask
+again each session" standing-permission language under "Session-assigned
+feature branch — never push it" below: that section's standing permission
+covered *which* branch to push to (`main`, never the session's own
+assigned branch), not *whether* to ask before each individual push. Commit
+locally as normal, then stop and ask before pushing.
 
 **`render.yaml`'s `buildFilter.ignoredPaths`** (root markdown docs, `desktop/**`,
 `client/android/**`, `.github/**`) skips a rebuild for pushes that touch only those paths -- none of
