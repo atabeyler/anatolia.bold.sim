@@ -1244,6 +1244,35 @@ loader recomputes/reseeds it fresh from the `individuals` table on every
 load regardless of what was last persisted, so there's nothing to
 backfill for simulations that predate this fix.
 
+**Hard-refresh/deep-link into a client route returned a real HTTP 404:**
+`main.rs`'s `fallback_service` (`ServeDir::new(client_dist).not_found_service(ServeFile::new(index_file))`)
+serves index.html's *body* correctly for any client-side route that isn't a
+real static file (`/admin`, `/simulation/:id`, ...), but tower-http's
+`not_found_service` does not override the *status code* of the 404 that
+triggered it -- so a page reload or a shared/bookmarked deep link into any
+of those routes got fully working SPA content back on an HTTP 404, which a
+browser's own hard-navigation handling, crawlers, and any status-code-based
+health/uptime check all treat as a failed load regardless of the body.
+`spa_fallback_status_fix` (a `middleware::from_fn` layered after the
+fallback service) rewrites exactly that case to 200: a 404 response whose
+`Content-Type` is `text/html` *and* whose request path both isn't under
+`/api/` and has no `.` in its last path segment (the standard SPA-fallback
+heuristic -- `/admin` has no extension, `/assets/chunk-abc123.js` does).
+That last condition matters because the *same* index.html fallback also
+answers a truly missing static asset or an unimplemented `/api/...` path;
+without it, those would have silently started reporting 200 too instead of
+the real 404 they should keep returning.
+
+**Fast-forward validation errors were silently swallowed:** `SimulationPage.tsx`'s
+`startFastForward()` used to `.catch(() => {})` the `POST
+/api/simulations/:id/fast-forward` call -- a request to warp to a year the
+simulation has already passed correctly gets rejected by the backend with a
+400 and a specific message (e.g. `"Already past year 5 (current: 7)"`), but
+the UI just cleared the year input and did nothing, leaving no indication
+anything had failed. The caught error's `response.data.error` now populates
+a small `ffError` state string, rendered as an inline red line under the
+WARP TO input (cleared on the next input edit or on a successful warp).
+
 ## Common Patterns
 
 ```js

@@ -54,6 +54,47 @@ async fn cross_origin_isolation_headers(request: Request, next: Next) -> Respons
     response
 }
 
+// ServeDir's `.not_found_service(ServeFile::new(index_file))` (see main()'s
+// own fallback_service below) serves the *body* of index.html correctly for
+// any client-side route (e.g. `/admin`, `/simulation/:id`) that isn't a real
+// static asset, but it does not override the *status code* of the 404 that
+// triggered the fallback -- so a hard reload or a deep link into any of
+// those routes got real, working SPA content back with an HTTP 404 status.
+// That status alone is enough to break things a body-content check can't
+// see: a browser's own hard-navigation error handling, search engine/social
+// crawlers, and any fetch()/curl-based health or uptime check that looks at
+// the status code all treated a completely working page load as a failure.
+//
+// A response's own `text/html` content-type alone isn't a safe enough
+// signal to rewrite on: the *same* index.html fallback also answers a truly
+// missing static asset (`/assets/old-chunk-abc123.js`, a stale/deleted URL)
+// and a genuinely unimplemented `/api/...` path, both of which should keep
+// reporting a real 404 rather than start lying that they succeeded. This
+// mirrors the path heuristic standard SPA dev servers use (webpack-dev-server's
+// `historyApiFallback`, etc.): only a request whose last path segment has no
+// `.` (so it looks like a client route, not `styles.css`/`chunk.js`/`logo.png`)
+// and that isn't under `/api/` gets its 404 promoted to 200.
+async fn spa_fallback_status_fix(request: Request, next: Next) -> Response {
+    let path = request.uri().path().to_string();
+    let looks_like_client_route = !path.starts_with("/api/")
+        && path
+            .rsplit('/')
+            .next()
+            .is_some_and(|last_segment| !last_segment.contains('.'));
+    let mut response = next.run(request).await;
+    if looks_like_client_route && response.status() == axum::http::StatusCode::NOT_FOUND {
+        let is_html = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/html"));
+        if is_html {
+            *response.status_mut() = axum::http::StatusCode::OK;
+        }
+    }
+    response
+}
+
 // Render's free plan spins the whole web service down after ~15 minutes
 // without external traffic; the next request then pays a cold-start (new
 // container + Postgres reconnect) that can take 20-60s and, if it exceeds
@@ -263,8 +304,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // before -- a layer only covers whatever routes/services already exist
     // on the Router at the point .layer() is called, so applying it earlier
     // would leave the fallback_service (i.e. the actual HTML document real
-    // browsers load) without these headers, defeating the whole point.
-    app = app.layer(middleware::from_fn(cross_origin_isolation_headers));
+    // browsers load) without these headers, defeating the whole point. Same
+    // reasoning applies to spa_fallback_status_fix -- it only has a
+    // fallback_service response to inspect once the router above it exists.
+    app = app
+        .layer(middleware::from_fn(cross_origin_isolation_headers))
+        .layer(middleware::from_fn(spa_fallback_status_fix));
 
     let port = std::env::var("PORT")
         .ok()
