@@ -1026,6 +1026,34 @@ itself (e.g. keeping the web service and its Postgres instance in the same
 region) shrinks how much of a batch a client actually sees paced smoothly
 versus frozen through the real DB call.
 
+**Population-aware batch cap (`population_capped_batch_size`):** `MAX_BATCH_SIZE`
+(100 simulated days per loop iteration) assumes a population's per-day memory
+cost stays roughly constant across a batch -- not true while a colony is
+still growing fast. A real production incident (2026-08-04) confirmed this:
+a young population (a few dozen individuals, still doubling every few days)
+computed at speed=100 (batch_size=100) grew enough *within that single
+batch* to push the process past Render's 512MB memory ceiling, OOM-killing
+the instance and triggering a several-minute crash-loop that took down the
+*entire* service, not just that one simulation -- and because a speed change
+only takes effect on the *next* loop iteration, even a few-hundred-ms UI
+click on 100x (not a sustained one) was enough to queue one full 100-day
+batch and trigger it. `population_capped_batch_size(uncapped, population)`
+now applies a second ceiling on top of `MAX_BATCH_SIZE`, derived from
+`state.individuals.len()` already loaded for that iteration:
+`(POPULATION_BATCH_BUDGET / population).clamp(MIN_POPULATION_CAPPED_BATCH,
+MAX_BATCH_SIZE)` (`POPULATION_BATCH_BUDGET = 2_000`,
+`MIN_POPULATION_CAPPED_BATCH = 5`) -- full `MAX_BATCH_SIZE` for the small
+populations most simulations spend their early life at (where this
+incident's fast-growth risk actually lives), degrading roughly in
+proportion to population size beyond that, with a floor so a large,
+established population still ticks forward every iteration instead of
+stalling at batch_size=1. This is a conservative first pass, not derived
+from real memory profiling -- tune the two constants against real numbers
+if it proves too conservative (throughput complaints at a population size
+that turns out to be safe) or not conservative enough (further OOMs).
+Applies to both the normal speed-driven batch size and the fast-forward
+remaining-days batch size, since both share the same underlying risk.
+
 ## Tick error recovery (`runtime.rs`)
 
 Each running simulation's background tick loop (`runtime_loop`) catches a
