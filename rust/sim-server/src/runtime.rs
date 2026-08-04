@@ -56,6 +56,38 @@ const MAX_CONSECUTIVE_ERRORS: u32 = 5;
 /// already advanced by up to this many days past their `death_day`.
 pub(crate) const MAX_BATCH_SIZE: usize = 100;
 
+/// Extra ceiling on batch_size, applied on top of MAX_BATCH_SIZE and derived
+/// from the population already loaded for this iteration. Root-caused from a
+/// real production incident (2026-08-04): a young, still fast-growing
+/// population (a few dozen individuals) computed at speed=100 (batch_size=100)
+/// grew enough *within that single batch* to push the process past Render's
+/// 512MB memory ceiling, triggering a repeated OOM-kill crash-loop that took
+/// the whole service down (not just that one simulation) for several minutes.
+/// MAX_BATCH_SIZE alone assumes a population's per-day memory cost is roughly
+/// constant across a batch, which isn't true while a colony is still
+/// reproducing fast enough to meaningfully grow over 100 simulated days.
+///
+/// This is a conservative first-pass formula, not derived from real memory
+/// profiling (`POPULATION_BATCH_BUDGET` and the floor below are deliberately
+/// picked to bite well before the population level the actual incident
+/// occurred at, not tuned to a measured byte budget) -- tune it against real
+/// memory numbers if it proves too conservative (throughput complaints at a
+/// population size that turns out to be safe) or not conservative enough
+/// (further OOMs). It keeps the full MAX_BATCH_SIZE for the small
+/// populations most simulations spend their early life at (where the actual
+/// incident's fast-growth risk lives), and degrades roughly in proportion to
+/// population size beyond that, with a floor so a large, established
+/// population still makes real per-iteration progress rather than stalling
+/// at batch_size=1.
+const POPULATION_BATCH_BUDGET: usize = 2_000;
+const MIN_POPULATION_CAPPED_BATCH: usize = 5;
+
+fn population_capped_batch_size(uncapped: usize, population: usize) -> usize {
+    let population_cap = (POPULATION_BATCH_BUDGET / population.max(1))
+        .clamp(MIN_POPULATION_CAPPED_BATCH, MAX_BATCH_SIZE);
+    uncapped.min(population_cap)
+}
+
 /// While upload is paused, the tick loop skips its own per-batch DB writes
 /// entirely -- but still forces one anyway after this long, so a server
 /// restart/crash mid-pause loses at most a few minutes of progress instead
@@ -650,9 +682,10 @@ async fn runtime_loop(
         }
 
         let speed = state.speed_multiplier.unwrap_or(1).clamp(1, 1000) as usize;
+        let population = state.individuals.len();
         let batch_size = if fast_forwarding {
             let remaining = (target - state.current_day).max(1) as usize;
-            remaining.min(MAX_BATCH_SIZE)
+            population_capped_batch_size(remaining.min(MAX_BATCH_SIZE), population)
         } else {
             // Cap the burst size so a single loop iteration never blocks the
             // task for too long, but keep it proportional to `speed` -- the
@@ -660,8 +693,11 @@ async fn runtime_loop(
             // both scale with speed independently (that double-counting is
             // what caused the UI's speed selector to be ignored: throughput
             // would rocket past the chosen multiplier and flatline once
-            // both values hit their old hardcoded clamps).
-            speed.min(MAX_BATCH_SIZE)
+            // both values hit their old hardcoded clamps). Also capped by
+            // population_capped_batch_size (see its own doc comment) so a
+            // young, fast-growing colony can't repeat the 2026-08-04 OOM
+            // incident regardless of the speed setting.
+            population_capped_batch_size(speed.min(MAX_BATCH_SIZE), population)
         };
 
         // Chosen so batch_size / delay == speed days/sec, i.e. the "Nx" label in
@@ -1039,6 +1075,42 @@ async fn runtime_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── population_capped_batch_size() ──────────────────────────────────
+
+    #[test]
+    fn small_populations_are_uncapped() {
+        // A pair of founders, or any population light enough that
+        // POPULATION_BATCH_BUDGET / population still exceeds MAX_BATCH_SIZE,
+        // must behave exactly as before this fix -- full throughput at every
+        // speed setting for the population range most simulations spend
+        // their early life at.
+        assert_eq!(population_capped_batch_size(100, 2), 100);
+        assert_eq!(population_capped_batch_size(20, 2), 20);
+    }
+
+    #[test]
+    fn a_growing_population_reduces_the_batch_before_the_incident_threshold() {
+        // The real 2026-08-04 OOM happened with population in the ~30-70
+        // range at batch_size=100; the cap must already bite well before 67.
+        let capped_at_67 = population_capped_batch_size(100, 67);
+        assert!(capped_at_67 < 100, "expected a reduced cap at population 67, got {capped_at_67}");
+        assert!(capped_at_67 <= 30, "expected a meaningfully reduced cap at population 67, got {capped_at_67}");
+    }
+
+    #[test]
+    fn a_large_established_population_still_makes_progress() {
+        // Never degrades to a batch_size of 0 or 1 -- MIN_POPULATION_CAPPED_BATCH
+        // guarantees a large population still ticks forward every iteration.
+        assert_eq!(population_capped_batch_size(100, 100_000), MIN_POPULATION_CAPPED_BATCH);
+    }
+
+    #[test]
+    fn never_raises_the_batch_above_what_was_already_requested() {
+        // A small requested batch (e.g. a fast-forward with only 3 days
+        // remaining) must never get inflated by the population cap.
+        assert_eq!(population_capped_batch_size(3, 2), 3);
+    }
 
     // ── compute_per_day_delay_ms() ──────────────────────────────────────
 
