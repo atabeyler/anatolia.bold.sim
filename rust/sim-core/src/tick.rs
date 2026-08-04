@@ -1298,6 +1298,18 @@ pub fn advance_one_day(state: &mut SimulationState) -> (TickReport, PhaseTimings
                 let cause_str = pascal_to_snake(&format!("{cause:?}"));
                 individual.extra.insert("death_cause".to_string(), json!(cause_str));
                 events.push(json!({ "type": "death", "individual_id": individual.id, "name": individual_display_name(individual), "cause": cause_str, "day": current_day, "importance": "medium", "is_founder": individual.is_founder }));
+            } else {
+                // Only reached by an individual who just survived today's
+                // death roll -- see wounds.rs's own doc comment for why a
+                // wound is deliberately a consequence of danger that *didn't*
+                // kill rather than an independent risk. Healing runs for
+                // every survivor regardless of whether they were wounded
+                // today (so an existing wound from an earlier tick keeps
+                // closing even on a day with no new danger), but never for
+                // the individual who was just marked dead by the branch
+                // above -- a corpse has no physiology left to heal.
+                biology::wounds::maybe_inflict_wound(individual, current_day, Some(&world_value));
+                biology::wounds::update_wound_healing(individual);
             }
         }
     }
