@@ -761,14 +761,31 @@ empirically rather than trusting either estimate exactly. A stale
 reason -- it double-counted predator danger once wounds.rs became the actual
 source of predator/wildlife/injury/exposure deaths.
 
-**Known calibration gap, found by the empirical validation harness and left
-for a follow-up investigation:** non-founder individuals in the 5-15y band
-measure meaningfully above their documented ~1%/yr target even after the
-above rework, traced to chronic cortisol elevation (mortality.rs's own
-`cortisol > 0.6` term) being far more common among juveniles than adults --
-a psychology.rs/hormones.rs stress-model issue, not a wounds.rs or
-mortality-formula-coefficient issue. See `empirical_validation.rs`'s own
-comments and mortality.rs's cortisol-term comment for the full finding.
+**Target annual mortality rates were never actually checked against the
+paper they cited, and undershot it across every age band:**
+`compute_daily_death_risk`'s per-age-band base_risk table carried a comment
+citing Gurven & Kaplan (2007) for its targets (0-1y ~8%, 1-5y ~3.7%, 5-15y
+and 15-45y both ~1%, 45-60y ~2.5%, 60-75y ~8%, 75+ ~20%), but those figures
+were never actually derived from that paper -- they were a rough,
+uncited-in-practice guess. Fetching the paper directly and numerically
+integrating its own Table 2 (Siler mortality-hazard model parameters,
+PDR 33(2):321-365) across each age band, averaged over the five
+"traditional hunter-gatherer" populations it reports (Hadza, Ache-forest,
+Hiwi, !Kung, Agta), gives real targets that are higher across every band --
+most severely 0-1y (real ~23.4%, nearly 3x the coded value) and 15-45y
+(real ~1.72%, which the coded table also wrongly treated as identical to
+5-15y's ~1.35%). `compute_daily_death_risk`'s base_risk constants and
+`empirical_validation.rs`'s `AGE_BANDS` were both rescaled to these
+corrected, properly-sourced targets (5-15y and 15-45y now get their own
+distinct base_risk constants, since the real data no longer supports
+treating them as one band) -- see mortality.rs's own doc comment for the
+full seven-band table and method. This closed a suspected chronic-cortisol
+mortality gap (juveniles running measurably more stressed than adults,
+a real psychology.rs/hormones.rs effect, still worth its own investigation)
+that had looked much larger than it actually was, because it was being
+measured against an uncited, too-low target rather than the real one.
+`empirical_validation.rs`'s Monte Carlo test now passes outright against the
+corrected targets, with no band left `#[ignore]`d.
 
 ## Biomes
 
