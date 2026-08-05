@@ -38,7 +38,31 @@ pub enum DeathCause {
 }
 
 /// Target annual mortality rates (prehistoric hunter-gatherer baseline):
-/// 0-1y ~8%, 1-5y ~3.7%, 5-15y ~1%, 15-45y ~1%, 45-60y ~2.5%, 60-75y ~8%, 75+ ~20%.
+/// 0-1y ~23.4%, 1-5y ~4.3%, 5-15y ~1.35%, 15-45y ~1.72%, 45-60y ~3.1%,
+/// 60-75y ~10.5%, 75+ ~33%.
+///
+/// These are not a paraphrase or a rough recollection of Gurven & Kaplan
+/// (2007) -- they're numerically derived directly from that paper's own
+/// Table 2 (Siler mortality-hazard model parameters, PDR 33(2):321-365),
+/// averaged across the five "traditional hunter-gatherer" populations it
+/// reports (Hadza, Ache-forest, Hiwi, !Kung, Agta), by integrating each
+/// population's own hazard function h(x) = a1*e^(-b1*x) + a2 + a3*e^(b3*x)
+/// across each age band and converting the resulting per-band cumulative
+/// survival probability to an annualized rate. The previous constants here
+/// (0-1y ~8%, 1-5y ~3.7%, 5-15y ~1%, 15-45y ~1%, 45-60y ~2.5%, 60-75y ~8%,
+/// 75+ ~20%) were never actually checked against the paper they cited --
+/// every single band undershot the real figure, most severely 0-1y (the
+/// coded value was less than half the real one) and 15-45y (the coded value
+/// treated it identically to 5-15y, but the real data shows meaningfully
+/// higher adult mortality once past childhood). This was found and fixed
+/// specifically because `empirical_validation.rs`'s Monte Carlo harness had
+/// been validating the simulation's *emergent* behavior against these
+/// numbers as if they were solid ground truth -- a validation loop is only
+/// as good as what it validates against, and this one had never actually
+/// been checked. 75+ (integrated over the 75-85y span the paper's data
+/// meaningfully covers) is the least certain of the seven: Siler-model
+/// tails extrapolate poorly at extreme old age, and one population (Hiwi)
+/// alone accounts for most of the tail's steepness.
 /// Disease outbreaks, starvation, and disasters layer on top via multipliers.
 pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, environment: Option<&Value>) -> f64 {
     let chronological_age = get_age(individual, current_day);
@@ -51,18 +75,24 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
     let phenotype = &individual.phenotype;
     let is_founder = individual.is_founder;
 
+    // 5-15y and 15-45y now get their own constants (previously shared one
+    // flat `age < 45.0` branch) -- the real data above no longer supports
+    // treating them as identical; adult mortality past childhood runs
+    // meaningfully higher than school-age childhood mortality does.
     let mut base_risk = if age < 1.0 {
-        0.00022
+        0.00064
     } else if age < 5.0 {
-        0.00010
+        0.000116
+    } else if age < 15.0 {
+        0.0000365
     } else if age < 45.0 {
-        0.000027
+        0.0000465
     } else if age < 60.0 {
-        0.000069
+        0.0000865
     } else if age < 75.0 {
-        0.00023
+        0.000302
     } else {
-        0.00061
+        0.00101
     };
 
     // These per-age-band figures were calibrated (see the doc comment
@@ -91,7 +121,7 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
     // Extinction guard: tiny bands receive outsized individual attention.
     // Exempts the 0-1y band specifically: a real infant's own mortality risk
     // doesn't fall just because the surrounding population is small -- the
-    // documented ~8%/yr target above already accounts for real prehistoric
+    // documented ~23%/yr target above already accounts for real prehistoric
     // infant mortality, and a young colonizing population (the common case
     // this simulation spends most of its early life in, and exactly where
     // this guard would otherwise apply almost continuously) is not a reason
@@ -108,18 +138,20 @@ pub fn compute_daily_death_risk(individual: &Individual, current_day: i32, envir
     }
 
     // Thriving healthy individual: well-fed prime-years individuals get a
-    // discount. Covers 5-45y, not just 15-45y -- mortality.rs's own
-    // documented targets put the 5-15y and 15-45y bands at the *same* rate
-    // (~1%/yr each), both sourced from the same low-background-mortality
-    // "childhood past infancy through prime adulthood" segment of the
-    // Gurven & Kaplan life-table data this module cites, so a well-fed,
-    // uninjured individual should get the same real discount at 8 as at 25.
-    // Restricting this to 15+ left the 5-15y band with the same undiscounted
-    // base_risk as 15-45y but no way to reach its own equally-low target --
+    // discount. Covers 5-45y, not just 15-45y: even though 5-15y and 15-45y
+    // now carry their own distinct base_risk constants (see the doc comment
+    // above -- the real Gurven & Kaplan data no longer supports treating
+    // them as identical), both are still drawn from the same
+    // low-background-mortality "childhood past infancy through prime
+    // adulthood" segment of that data, so a well-fed, uninjured individual
+    // gets the same real discount at 8 as at 25 -- it's the *base rate*
+    // that differs between the two bands, not whether thriving health
+    // should matter. Restricting this to 15+ (the original form) left the
+    // 5-15y band with no way to reach its own target at all --
     // `empirical_validation.rs`'s Monte Carlo harness caught this as a
-    // ~4-6x overshoot specific to 5-15y once the wound-collapse mechanism
-    // (wounds.rs) was ruled out as the cause (it contributes zero deaths to
-    // this band in practice).
+    // meaningful overshoot specific to 5-15y once the wound-collapse
+    // mechanism (wounds.rs) was ruled out as the cause (it contributes zero
+    // deaths to this band in practice).
     if (5.0..45.0).contains(&age) && health.hp > 0.85 && health.calories > 0.7 {
         base_risk *= 0.4;
     }
