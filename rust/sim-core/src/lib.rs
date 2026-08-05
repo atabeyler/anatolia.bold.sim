@@ -2,6 +2,7 @@
 
 pub mod biology;
 pub mod consciousness;
+pub mod consciousness_sensitivity;
 pub mod environment;
 pub mod epigenetics;
 pub mod hormones;
