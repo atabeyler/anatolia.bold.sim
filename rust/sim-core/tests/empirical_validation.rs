@@ -197,14 +197,20 @@ fn run_monte_carlo(replicates: u32, years: i32) -> [BandStats; 7] {
 // above compounded to explain the full gap, not just partially close it.
 #[test]
 fn emergent_age_specific_mortality_is_within_3x_of_documented_prehistoric_targets() {
-    // 30 replicates x 20 years is enough for the always-populated 15-45y
+    // 40 replicates x 20 years is enough for the always-populated 15-45y
     // band (both founders start in it) to accumulate thousands of
     // person-days; younger/older bands are inherently sparser since they
     // require descendants to survive long enough to reach them, which this
     // test's tolerance already accounts for by skipping bands with too
     // little data to say anything (see the `continue` below) rather than
-    // asserting on noise.
-    let stats = run_monte_carlo(20, 15);
+    // asserting on noise. Bumped from 20x15 after the corrected mortality
+    // targets (see mortality.rs's own doc comment) revealed the 5-15y band
+    // sits close enough to its 3x tolerance boundary that 20x15's sampling
+    // noise alone could occasionally flip a passing run into a failing one
+    // (observed: 1.53x on one run, 3.46x on the next, same code) -- more
+    // replicates narrows that noise rather than papering over it with a
+    // looser threshold.
+    let stats = run_monte_carlo(40, 20);
 
     const REL_TOLERANCE: f64 = 3.0;
     const MIN_PERSON_YEARS_TO_JUDGE: f64 = 20.0;
