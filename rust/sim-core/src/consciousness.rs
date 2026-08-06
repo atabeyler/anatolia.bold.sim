@@ -221,6 +221,7 @@ impl ConsciousnessDelta {
 ///   - tom_bonus scales with `self_awareness` (NRXN1_01/SHANK3_01/RELN_01
 ///     composite) -- RELN_01 is literally annotated `"theory_of_mind"` in
 ///     genome.rs's own locus table.
+///
 /// Each multiplier is bounded to 0.5x-1.5x (a below-average-genetics
 /// individual is never fully zeroed out, an above-average one is never
 /// unboundedly amplified), the same "small, bounded, additive/multiplicative
