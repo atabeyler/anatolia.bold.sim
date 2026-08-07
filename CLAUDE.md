@@ -1607,15 +1607,15 @@ ADMIN_USER_CODE=BOLD
 ANTHROPIC_API_KEY=<ROTATED -- see note below>
 DISABLE_WORKERS=true
 ELEVENLABS_API_KEY=<ROTATED -- see note below>
-GEMINI_API_KEY=REDACTED-GEMINI-KEY
-GITHUB_RELEASES_TOKEN=REDACTED-GITHUB-PAT
+GEMINI_API_KEY=<ROTATED -- see note below>
+GITHUB_RELEASES_TOKEN=<ROTATED -- see note below>
 GROQ_API_KEY=<ROTATED -- see note below>
 JWT_REFRESH_SECRET=<ROTATED -- see note below>
 JWT_SECRET=<ROTATED -- see note below>
 NODE_ENV=production
 OPENAI_API_KEY=<ROTATED -- see note below>
 OPENROUTER_API_KEY=<ROTATED -- see note below>
-RESEND_API_KEY=REDACTED-RESEND-KEY
+RESEND_API_KEY=<ROTATED -- see note below>
 ```
 
 **2026-08-07 incident:** this repo was briefly made public, and every value
