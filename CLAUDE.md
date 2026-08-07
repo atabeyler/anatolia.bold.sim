@@ -1601,35 +1601,45 @@ explicitly on Render -- `email.rs::app_url` falls back to
 
 ```
 ADMIN_EMAIL=info@boldkimya.com.tr
-ADMIN_PASSWORD=REDACTED-PASSWORD
-ADMIN_SEED_TOKEN="REDACTED-ADMIN-SEED-TOKEN"
+ADMIN_PASSWORD=<ROTATED -- see note below>
+ADMIN_SEED_TOKEN=<ROTATED -- see note below>
 ADMIN_USER_CODE=BOLD
-ANTHROPIC_API_KEY=REDACTED-ANTHROPIC-KEY
+ANTHROPIC_API_KEY=<ROTATED -- see note below>
 DISABLE_WORKERS=true
-ELEVENLABS_API_KEY=REDACTED-ELEVENLABS-KEY
-GEMINI_API_KEY=REDACTED-GEMINI-KEY
+ELEVENLABS_API_KEY=<ROTATED -- see note below>
+GEMINI_API_KEY=<ROTATED -- see note below>
 GITHUB_RELEASES_TOKEN=<ROTATED -- see note below>
-GROQ_API_KEY=REDACTED-GROQ-KEY
-JWT_REFRESH_SECRET="REDACTED-JWT-REFRESH-SECRET"
-JWT_SECRET="REDACTED-JWT-SECRET"
+GROQ_API_KEY=<ROTATED -- see note below>
+JWT_REFRESH_SECRET=<ROTATED -- see note below>
+JWT_SECRET=<ROTATED -- see note below>
 NODE_ENV=production
-OPENAI_API_KEY=REDACTED-OPENAI-KEY
-OPENROUTER_API_KEY=REDACTED-OPENROUTER-KEY
+OPENAI_API_KEY=<ROTATED -- see note below>
+OPENROUTER_API_KEY=<ROTATED -- see note below>
 RESEND_API_KEY=<ROTATED -- see note below>
 ```
 
-**2026-08-07 incident:** GitHub's secret-scanning partner program detected the
-real `RESEND_API_KEY` and `GITHUB_RELEASES_TOKEN` values that used to sit in
-the block above (this file is committed to the repo) and both Resend and
-GitHub auto-revoked them on their own -- proof that "private repo, single
-collaborator" does not actually stop provider-side secret scanning from
-finding and killing a key that sits in plaintext here. Both values above are
-redacted for that reason; regenerate a real key from each provider's
-dashboard, set the new value directly in the Render dashboard, and do not
-paste the live value back into this file. Until re-set on Render, approval/
-notification emails silently fail to send (see `RESEND_API_KEY`'s own
-Environment Variables entry in `README.md`) and the Android/Desktop update
-proxy (`releases.rs`) cannot reach this repo's release assets.
+**2026-08-07 incident:** this repo was briefly made public, and every value
+above was live at github.com for that entire window -- not just to
+provider-side scanners, but to anyone who happened to view or clone the repo
+during it. GitHub's secret-scanning partner program caught `RESEND_API_KEY`
+and `GITHUB_RELEASES_TOKEN` first (both auto-revoked by their providers),
+then Google Cloud independently flagged `GEMINI_API_KEY` the same way --
+proof this wasn't a one-off, and every other value in this block must be
+treated as equally compromised even though nothing revoked them
+automatically. All values above are redacted for that reason. Every one of
+them needs to be regenerated from its own provider dashboard (or, for
+`JWT_SECRET`/`JWT_REFRESH_SECRET`/`ADMIN_SEED_TOKEN`, a fresh random value)
+and set directly in the Render dashboard -- never pasted back into this
+file. Until each is rotated on Render: approval/notification emails
+silently fail to send, the Android/Desktop update proxy can't reach this
+repo's release assets, every existing login session becomes invalid the
+moment `JWT_SECRET`/`JWT_REFRESH_SECRET` are rotated (expected and fine --
+users just log in again), and the AI-backed features (Hypothesis Test, AI
+Analysis, Documentary, ARIA voice) fall back to their heuristic path until
+`GEMINI_API_KEY` is replaced. Confirm the repo's visibility is back to
+private before doing any of this, and see the Android keystore backup
+section below separately -- it was also exposed in the same window and is
+not something this note's "just rotate it" advice applies to.
 
 ## Login Credentials (Render dashboard + in-app admin)
 
@@ -1637,17 +1647,23 @@ Same rationale/scope as the two backups above (private repo, single
 collaborator) — kept here purely so these don't need to be re-supplied each
 session.
 
+**Both passwords below were exposed in the same 2026-08-07 public-repo
+incident described above and must be changed, not just rotated in this
+file** — the Render dashboard password directly on dashboard.render.com,
+and the in-app admin password via the admin account itself (or by
+re-running seed-admin with a new `ADMIN_PASSWORD`).
+
 **Render dashboard** (dashboard.render.com):
 ```
 email: info@boldkimya.com.tr
-password: REDACTED-PASSWORD
+password: <CHANGED -- see note above>
 ```
 
 **In-app admin login** (same credentials as `ADMIN_USER_CODE`/`ADMIN_PASSWORD`
 above):
 ```
 code: BOLD
-password: REDACTED-PASSWORD
+password: <CHANGED -- see note above>
 ```
 
 When asked to test a change, actually drive the running app in a real
