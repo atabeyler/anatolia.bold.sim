@@ -1,6 +1,6 @@
 # Anatolia-Sim
 
-[![Tests](https://github.com/atabeyler/anatolia.bold.sim/actions/workflows/test.yml/badge.svg)](https://github.com/atabeyler/anatolia.bold.sim/actions/workflows/test.yml) [![License: Proprietary](https://img.shields.io/badge/license-proprietary-red)](LICENSE.txt)
+[![Version](https://img.shields.io/github/package-json/v/atabeyler/anatolia.bold.sim)](package.json) [![Tests](https://github.com/atabeyler/anatolia.bold.sim/actions/workflows/test.yml/badge.svg)](https://github.com/atabeyler/anatolia.bold.sim/actions/workflows/test.yml) [![License: Proprietary](https://img.shields.io/badge/license-proprietary-red)](LICENSE.txt)
 
 **Bold Askeri Teknoloji ve Savunma Sanayi A.Ş.**
 
