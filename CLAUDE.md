@@ -1615,7 +1615,7 @@ JWT_SECRET=<ROTATED -- see note below>
 NODE_ENV=production
 OPENAI_API_KEY=<ROTATED -- see note below>
 OPENROUTER_API_KEY=<ROTATED -- see note below>
-RESEND_API_KEY=<ROTATED -- see note below>
+RESEND_API_KEY=REDACTED-RESEND-KEY
 ```
 
 **2026-08-07 incident:** this repo was briefly made public, and every value
