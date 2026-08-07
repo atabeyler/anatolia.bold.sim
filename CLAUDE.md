@@ -1608,15 +1608,28 @@ ANTHROPIC_API_KEY=REDACTED-ANTHROPIC-KEY
 DISABLE_WORKERS=true
 ELEVENLABS_API_KEY=REDACTED-ELEVENLABS-KEY
 GEMINI_API_KEY=REDACTED-GEMINI-KEY
-GITHUB_RELEASES_TOKEN=REDACTED-GITHUB-PAT
+GITHUB_RELEASES_TOKEN=<ROTATED -- see note below>
 GROQ_API_KEY=REDACTED-GROQ-KEY
 JWT_REFRESH_SECRET="REDACTED-JWT-REFRESH-SECRET"
 JWT_SECRET="REDACTED-JWT-SECRET"
 NODE_ENV=production
 OPENAI_API_KEY=REDACTED-OPENAI-KEY
 OPENROUTER_API_KEY=REDACTED-OPENROUTER-KEY
-RESEND_API_KEY=REDACTED-RESEND-KEY
+RESEND_API_KEY=<ROTATED -- see note below>
 ```
+
+**2026-08-07 incident:** GitHub's secret-scanning partner program detected the
+real `RESEND_API_KEY` and `GITHUB_RELEASES_TOKEN` values that used to sit in
+the block above (this file is committed to the repo) and both Resend and
+GitHub auto-revoked them on their own -- proof that "private repo, single
+collaborator" does not actually stop provider-side secret scanning from
+finding and killing a key that sits in plaintext here. Both values above are
+redacted for that reason; regenerate a real key from each provider's
+dashboard, set the new value directly in the Render dashboard, and do not
+paste the live value back into this file. Until re-set on Render, approval/
+notification emails silently fail to send (see `RESEND_API_KEY`'s own
+Environment Variables entry in `README.md`) and the Android/Desktop update
+proxy (`releases.rs`) cannot reach this repo's release assets.
 
 ## Login Credentials (Render dashboard + in-app admin)
 
