@@ -1,5 +1,7 @@
 # Anatolia-Sim
 
+[![Tests](https://github.com/atabeyler/anatolia.bold.sim/actions/workflows/test.yml/badge.svg)](https://github.com/atabeyler/anatolia.bold.sim/actions/workflows/test.yml) [![License: Proprietary](https://img.shields.io/badge/license-proprietary-red)](LICENSE.txt)
+
 **Bold Askeri Teknoloji ve Savunma Sanayi A.Ş.**
 
 **An agent-based civilization simulator built around a single scientific question:**
@@ -10,11 +12,14 @@ No individual other than the two founders is ever directly programmed. Every beh
 
 ---
 
-## Core Hypothesis
+## Research Context
 
 The simulation tests whether emergent complexity — language stages, consciousness, cultural norms, religion, law, art, astronomy — can arise from a minimal genetic seed without any scripted shortcuts for non-founder individuals.
 
-Founders carry precisely tuned alleles across 32 gene loci (FOXP2, BDNF, NRXN1, OXTR, …). Every child inherits through Mendelian recombination with ~2 mutations per gamete (~4 per child). Phenotypes — intelligence, curiosity, aggression, language capacity, consciousness potential — flow entirely from the genome.
+- **Motivation:** most agent-based "civilization" simulations script the interesting behavior directly (a leader role assigned by the engine, a belief injected on a timer). That answers "can we render a plausible-looking civilization?", not "does civilization-like complexity actually fall out of genetics and learning alone?" Anatolia-Sim enforces the harder question as a hard constraint (see the Cardinal Rule below) rather than a design guideline.
+- **Approach:** two founders carry precisely tuned alleles across 32 gene loci (FOXP2, BDNF, NRXN1, OXTR, …). Every child inherits through Mendelian recombination with ~2 mutations per gamete (~4 per child). Phenotypes — intelligence, curiosity, aggression, language capacity, consciousness potential — flow entirely from the genome, and every subsequent behavior (language stage, belief adoption, social role, migration bias) must trace back to either an inherited allele or something the individual directly observed. 19 concurrent engines (see Architecture below) implement the mechanisms this can plausibly run on — genetics, epigenetics, hormones, psychology, social structure, economy, environment — without ever special-casing a non-founder individual.
+- **Validation, deliberately scoped:** where a real-world empirical target exists, the simulation is checked against it rather than tuned by eye — e.g. `mortality.rs`'s per-age-band daily death risk is calibrated against Gurven & Kaplan (2007)'s Siler hazard-model parameters across five real hunter-gatherer populations, with a Monte Carlo harness (`tests/empirical_validation.rs`) that fails CI if the simulated rate drifts outside tolerance of the historical target. Most of the simulation's other mechanisms (consciousness growth, language emergence, belief formation) have no equivalent real-world dataset to validate against — they're internally consistent and grounded in cited research (see Scientific Background below), not independently verified against real civilizational data, because no such dataset of "civilizations built from two genetically-defined founders" exists to validate against.
+- **Limitations:** this is a single, non-distributed simulation of population dynamics, not a live-connected experiment — there's no real genetic sequencing, no real anthropological field data feeding in, and no claim that any specific emergent outcome (which belief archetype appears, which technology unlocks first) predicts anything about real human prehistory. The value is in the mechanism (does genetics + observation alone reliably produce language/belief/technology/civilization), not in any single run's specific narrative.
 
 ---
 
@@ -173,6 +178,50 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 
 ---
 
+## Environment Variables
+
+Critical — the cloud/Postgres deploy refuses to start (or immediately rejects requests) without these; a plain local dev run tolerates most of them missing by falling back to SQLite and a locally-generated default:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | Postgres connection string. On Render (`RENDER_EXTERNAL_URL` set) the server panics at startup if this is missing — it deliberately refuses to fall back to a throwaway SQLite database on the production web deploy. Locally (no `RENDER_EXTERNAL_URL`), an unset `DATABASE_URL` just falls back to a local `rust/sim.db` SQLite file |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET` | JWT signing secrets. Required (server panics) only when running as the cloud/Postgres backend — desktop/Android "Yerel" mode has no accounts of its own and vouches tokens through the cloud instead, so it never needs its own secret |
+| `ADMIN_SEED_TOKEN`, `ADMIN_USER_CODE`, `ADMIN_PASSWORD`, `ADMIN_EMAIL` | Required together to create the first admin account via `POST /api/admin/seed-admin` (rate-limited to 5 attempts/15 min, constant-time token comparison) — without a seeded admin, nothing in the app can be administered |
+
+Configured, but fails silently if wrong or missing — the app keeps running and looks like it succeeded, so these deserve extra care:
+
+| Variable | What actually happens if it's missing |
+|---|---|
+| `RESEND_API_KEY` | Registration/approval emails are silently skipped (`email.rs` logs a `tracing::warn!` and returns) — `POST /api/auth/register` still responds `201 Created` / "Awaiting admin approval" regardless of whether the notification email actually went out. If admin approval emails aren't arriving in production, check this first |
+| `ADMIN_EMAIL` | Falls back to a hardcoded `info@boldkimya.com.tr` if unset — not a hard failure, but silent if you meant to route admin notifications elsewhere |
+
+Everything else required for normal operation:
+
+| Variable | Description |
+|---|---|
+| `APP_URL` | The app's externally-reachable URL, used in emailed links. Falls back to Render's own `RENDER_EXTERNAL_URL` if unset, so this rarely needs to be set explicitly on Render itself |
+| `CLOUD_API_URL` | The cloud deployment's own URL, used by a desktop/Android "Yerel" (local/SQLite) process to vouch a bearer token against the real cloud account it was issued by. Defaults to `https://anatolia-sim.onrender.com` |
+| `SIM_DATA_DIR` | Where the desktop/Android bundled server writes its local SQLite database and checkpoints |
+
+Platform-provided (set by Render itself, or safe to leave at defaults locally):
+
+| Variable | Description |
+|---|---|
+| `RENDER_EXTERNAL_URL` | Set automatically by Render on a running web service; also doubles as the signal `db.rs` uses to decide "this is the production web deploy, `DATABASE_URL` is mandatory here" |
+| `PORT` | The port the server listens on; Render injects this automatically |
+| `NODE_ENV` | Affects client build mode; not read by the Rust server itself |
+
+Optional (if unset, the app keeps working on a heuristic/local fallback):
+
+| Variable | What it does |
+|---|---|
+| `GEMINI_API_KEY` | Enables real Google Gemini calls for Hypothesis Test, AI Analysis, and the Documentary panel's narration. Unset or a failed call both fall back to the same deterministic Rust heuristic path — a missing key is never a hard failure, just a lower-quality narrative |
+| `GEMINI_MODEL` | Overrides the default Gemini model id — useful to pin against a dated snapshot rather than silently riding a moving "latest" alias |
+| `GITHUB_RELEASES_TOKEN` | Lets the desktop/Android in-app update checkers (`releases.rs`) read this repo's release metadata/assets on your behalf once the repo is private — unnecessary while the repo is public |
+| `RAYON_NUM_THREADS`, `TOKIO_WORKER_THREADS` | Manual overrides for the simulation's parallel-tick thread pool and the async runtime's worker count, for constrained hosting environments |
+
+---
+
 ## Simulation Controls
 
 - **God Mode** — Trigger earthquakes, floods, epidemics, volcanic eruptions, meteors; toggle quarantine mode to suppress disasters; speak to individuals in their current language stage
@@ -228,6 +277,54 @@ Desktop and Android builds launch the same Rust server as a bundled local binary
 
 ---
 
+## How It Works
+
+**Login flow:** user code + password are checked against the cloud/Postgres backend's `users` table (bcrypt-hashed). A successful login issues a short-lived access token (15 minutes) plus a refresh token (30 days). New self-registrations land in `pending` status and email an approval link (7-day-lived, signed with the refresh secret) to `ADMIN_EMAIL` — the account only activates once an admin approves it. Desktop/Android "Yerel" mode has no local account store at all: it forwards the bearer token to the cloud's `/api/auth/me` to vouch for it, caching the result for 60 seconds to avoid a network round trip on every request.
+
+**Tick loop:** each running simulation advances one simulated day at a time through 19 engines in a fixed order (biology → genome → epigenetics → microbiome → language → consciousness → psychology → hormones → agent behavior/movement → technology → belief → culture → art → architecture → law → astronomy → social → economy → environment), batched and paced so the visible simulation speed matches the selected multiplier (see `runtime.rs`'s tick-pacing notes in `AGENTS.md`). A panicking day is caught and logged rather than killing the loop outright; 5 consecutive failures auto-pause the simulation (`GET /:id/diagnostics` surfaces why).
+
+**Simulation creation:** the player names and configures two founders (or accepts God Mode defaults) → `create_founder_for_simulation` seeds their genome/phenotype/epigenome directly (the one place the Cardinal Rule allows direct configuration) → the tick loop takes over, and every descendant's behavior from that point on must trace back to inheritance or observation.
+
+---
+
+## Deployment
+
+The app is deployed on Render via the `render.yaml` blueprint in this repo (native Rust binary, no Node backend at runtime).
+
+| Workflow | Trigger | Purpose |
+|---|---|---|
+| `.github/workflows/test.yml` (Tests) | Every push to `main`, every PR | Rust core tests + Monte Carlo empirical validation, Rust Clippy (`-D warnings`), sim-server tests, sim-wasm build + native tests + clippy, client tests + typecheck + build |
+| `.github/workflows/release.yml` (Desktop Release) | Push to `main` (skips doc-only/Android-only paths), or manual `workflow_dispatch` | Builds and publishes the Windows desktop installer via Tauri; only tags a genuinely new version if `package.json`'s version actually changed since the last release |
+| `.github/workflows/android-release.yml` (Android Release) | Push to `main`, or manual `workflow_dispatch` | Builds and publishes the signed Android APK |
+
+Unlike a CI-gated deploy pattern, Render's own auto-deploy (`autoDeployTrigger: commit` in `render.yaml`) rebuilds and redeploys the web service on every push to `main` directly — it does not wait for the Tests workflow to pass first. `render.yaml`'s `buildFilter.ignoredPaths` (root markdown docs, `desktop/**`, `client/android/**`, `.github/**`) skips a rebuild for pushes that touch only those paths, since none of them affect the actual build output. `GET /api/health`'s `version` field reports the exact commit SHA currently live, which is the reliable way to confirm a push has actually reached production rather than assuming from push time alone.
+
+---
+
+## Performance
+
+A single live sample against the production deployment (Render free tier), taken 2026-08-07 — not an average, and free-tier cold-start/neighbor-noise variance is real. Treat as a rough order of magnitude, not an SLA.
+
+| Endpoint | Observed | Notes |
+|---|---|---|
+| `GET /api/health` | ~0.9s | No DB/auth involved; the only endpoint measurable here without an authenticated session |
+
+Most other endpoints (simulation state, population lists, tick WebSocket) require an authenticated session and weren't measured for this table — see `PerformancePanel` in a running simulation for live per-engine tick timing and DB round-trip cost instead, which is the more meaningful number for this app (a fixed request latency matters far less here than sustained tick throughput at high simulation speed).
+
+---
+
+## Security Notes
+
+- Passwords are bcrypt-hashed in the cloud backend's `users` table, never stored in plain text
+- Access tokens are short-lived (15 minutes); refresh tokens last 30 days
+- The registration-approval link mailed to the admin is a signed JWT (reusing the refresh secret, tagged with a distinct `purpose` claim) valid for 7 days — possession of the link is the authorization, there's no separate login step to approve a pending user
+- Desktop/Android "Yerel" mode holds no account secrets of its own: every bearer token is vouched for by calling the real cloud's `/api/auth/me`, so a compromised local device never exposes the JWT signing secret itself
+- Login, registration, and admin-seeding are all rate-limited (login: 10/15 min per user code; registration: 20/15 min globally, since an attacker controls every field including the user code; seed-admin: 5/15 min globally, with constant-time token comparison against `ADMIN_SEED_TOKEN`)
+- `genetic_boost` (God Mode) only ever applies to founders — see the Cardinal Rule; this is enforced by a source-scanning test (`tests/cardinal_rule_source_scan.rs`), not just a convention
+- All admin notifications go to `ADMIN_EMAIL` — see the Environment Variables table above for what happens if `RESEND_API_KEY` isn't configured
+
+---
+
 ## Scientific Background
 
 The project draws on:
@@ -246,6 +343,52 @@ The project draws on:
 ## Project Notes
 
 > No individual other than the two founders may be given any behavior except through genetic inheritance and observational learning. This constraint is the entire point of the experiment.
+
+---
+
+## Roadmap
+
+Shipped:
+
+- ✅ 49-hormone dynamic endocrine system across the real HPA/HPT/HPG + digestive/cardiovascular-renal/bone axes
+- ✅ Mechanistic wound-based predator/injury/exposure/wildlife-encounter deaths, replacing a flat probability roll
+- ✅ Mortality rates recalibrated against real hunter-gatherer empirical data (Gurven & Kaplan 2007), validated by a Monte Carlo CI test
+- ✅ WASM-Local browser-only mode with genuine multithreading (`wasm-bindgen-rayon`), no server round trip required
+- ✅ Cross-simulation migration, kinship-aware mate selection, per-group dialect divergence, written records & inter-individual "reading"
+
+Under consideration (real gaps found during development, not a promised timeline):
+
+- ⬜ Movement system's panic-return-to-land (`_lastLandX/Y`) and food-memory direction (`_goodFoodAngle`) are flagged in-code as not yet implemented
+- ⬜ An iOS port — `rust/sim-wasm` exists specifically as groundwork for this (iOS doesn't allow a persistent bundled subprocess the way Android does), but isn't wired into any shipped build yet
+- ⬜ Admin login has no 2FA — once seeded, the highest-privilege account authenticates with the same single-factor password check as any other approved user
+- ⬜ A local/WASM-mode reverse listing (browsing local simulations from a pure Cloud session) isn't offered, since Cloud has no network path to an arbitrary device's local data
+
+---
+
+## FAQ
+
+**Why did my Hypothesis Test / AI Analysis come back as a short, formulaic summary instead of a rich narrative?** `GEMINI_API_KEY` is either unset or the Gemini call failed — both fall back to the same deterministic Rust heuristic path rather than erroring out. Not a bug; a missing key is an explicitly supported configuration, not a broken one.
+
+**A fix I know is merged doesn't seem to be present in the desktop/Android app — is the deploy broken?** Probably not the web deploy. Unlike the plain web app (always serves the latest built JS from Render), a native desktop/Android build bundles the client at CI build time — it only picks up a fix once that device's app is actually updated/reinstalled from the corresponding `Desktop Release`/`Android Release` workflow run. Check `GET /api/health`'s `version` field against the fixing commit's SHA to confirm the *server* is current before assuming anything is wrong.
+
+**A user says they never received the registration-approval email — what do I check?** First, is `RESEND_API_KEY` actually set? If it's missing, the server silently reports registration success without sending anything (see Environment Variables). If it is set, check `ADMIN_EMAIL` and the Resend dashboard for delivery failures.
+
+**Can two closely related individuals (e.g. full siblings) still have children?** Yes — kinship-aware mate selection discounts related candidates heavily (and further still once a group has culturally learned the `incest_taboo` norm) but never reduces the odds to exactly zero, and the existing inbreeding-coefficient fertility penalty still applies afterward. A related pair remains a possible, just disfavored, pairing.
+
+**Why did a simulation stop advancing with no visible error?** Check `GET /:id/diagnostics` — the tick loop auto-pauses a simulation after 5 consecutive per-day panics and logs each one to a 20-entry circular buffer there.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Check |
+|---|---|---|
+| Simulation stuck at status `paused` with no user action | 5 consecutive tick panics auto-paused it | `GET /:id/diagnostics`'s `error_log` |
+| Registration approval email never arrives, but the API reports success | `RESEND_API_KEY` not configured | See the FAQ entry above |
+| Deploy doesn't seem to reflect a recent push | Either the push hasn't propagated yet, or it only touched a path `render.yaml`'s `buildFilter.ignoredPaths` skips | Compare `GET /api/health`'s `version` field (the live commit SHA) against the pushed commit |
+| `cargo clippy --workspace --all-targets -- -D warnings` fails in CI | A lint (often `doc_lazy_continuation` on a multi-line `///` comment) introduced by a recent change | Run the same command locally before pushing — CI runs it verbatim |
+| A native (desktop/Android) build doesn't show a fix that's live on the web | Native builds bundle the client at CI build time, not at runtime | See the FAQ entry above; reinstall from the latest release workflow run |
+| Live watch screen looks frozen on Android's "Bulut" (cloud) mode specifically | The device's WebSocket host resolution predates the `isNativeAndroidApp()`/`CLOUD_API_URL` fix (see `AGENTS.md`'s Live watch connection notes) | Confirm the installed app build is recent enough to include that fix |
 
 ---
 
