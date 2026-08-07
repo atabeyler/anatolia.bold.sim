@@ -1,5 +1,7 @@
 # Anatolia-Sim
 
+**Bold Askeri Teknoloji ve Savunma Sanayi A.Ş.**
+
 **An agent-based civilization simulator built around a single scientific question:**
 
 > If two DNA-engineered founding individuals are released into a simulated world, can their descendants independently develop consciousness, language, technology, belief systems, and civilization through nothing but genetic inheritance and observational learning?
@@ -249,4 +251,6 @@ The project draws on:
 
 ## License
 
-MIT
+Proprietary — see [LICENSE.txt](LICENSE.txt). All rights reserved; this source is not licensed for copying, modification, or redistribution without the Company's prior written consent.
+
+© Bold Askeri Teknoloji ve Savunma Sanayi A.Ş. · All Rights Reserved
