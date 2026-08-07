@@ -49,6 +49,53 @@ The simulation runs 19 concurrent engines per tick (1 tick = 1 simulation day):
 | **Economy** | Foraging, trade, Gini coefficient, astronomy-boosted farming |
 | **Environment** | Biome, seasons, weather, natural disasters |
 
+A tick request's own path: `Client → REST/WebSocket → sim-server routes.rs →
+runtime.rs tick loop → sim-core's 19 engines in order (see table above) →
+save_state (Postgres/SQLite) → derive_stats/serialize_individual → pushed
+back over the WebSocket to every watching client.` God Mode interventions
+and AI-backed panels (Hypothesis Test, AI Analysis, Documentary) join this
+same path at the `sim-server` layer — `god.rs`/`analysis.rs` read or mutate
+`SimulationState` directly, then let the next regular tick (or an immediate
+`derive_stats` call) propagate the change, rather than running a parallel
+state machine of their own.
+
+```
+anatolia.bold.sim/
+├── rust/
+│   ├── sim-core/src/       # Engine crate -- see the table above; genome.rs,
+│   │                       #   individual.rs, mortality.rs, reproduction.rs
+│   │                       #   live under biology/
+│   ├── sim-server/src/     # Axum HTTP/WebSocket server
+│   │   ├── main.rs         # Route table, CORS, startup guards
+│   │   ├── routes.rs       # Simulation CRUD, checkpoints, reports, exports
+│   │   ├── runtime.rs      # Background tick loop, batching/pacing, error recovery
+│   │   ├── auth.rs         # Login/register/JWT, local-mode cloud vouching
+│   │   ├── db.rs           # Postgres/SQLite backend selection + queries
+│   │   ├── ws.rs           # Live-watch WebSocket broadcast
+│   │   ├── admin.rs        # Seed-admin, user approval/ban, audit
+│   │   ├── god.rs          # God Mode interventions, cross-sim migration
+│   │   ├── analysis.rs     # Hypothesis Test / AI Analysis (Gemini + heuristic)
+│   │   ├── gemini.rs       # Google Gemini client, model fallback
+│   │   ├── email.rs        # Resend-backed transactional email
+│   │   └── releases.rs     # Desktop/Android update proxy (GitHub Releases)
+│   └── sim-wasm/           # sim-core compiled to wasm32 for WASM-Local mode
+├── client/src/
+│   ├── components/panels/  # The 31 panels listed below
+│   ├── components/simulation/ # SimCreationWizard, live-watch view
+│   ├── store/               # Zustand state (simStore.ts)
+│   ├── utils/                # API/socket clients, i18n, hormoneGroups.ts
+│   └── wasmLocal/            # Browser-only local mode (see AGENTS.md)
+├── desktop/                  # Tauri shell (native window + local server launch)
+├── render.yaml                # Render deploy blueprint
+├── AGENTS.md / CLAUDE.md      # Full technical reference (formulas, loci, routes)
+└── CHANGELOG.md               # Notable changes per version
+```
+
+This tree covers the directories that matter for understanding the system,
+not every file — `AGENTS.md` is the exhaustive technical reference (engine
+formulas, the full 32-locus table, every API route) and the source itself
+is the final word on any specific behavior.
+
 ---
 
 ## Key Mechanics
@@ -389,6 +436,36 @@ Under consideration (real gaps found during development, not a promised timeline
 | `cargo clippy --workspace --all-targets -- -D warnings` fails in CI | A lint (often `doc_lazy_continuation` on a multi-line `///` comment) introduced by a recent change | Run the same command locally before pushing — CI runs it verbatim |
 | A native (desktop/Android) build doesn't show a fix that's live on the web | Native builds bundle the client at CI build time, not at runtime | See the FAQ entry above; reinstall from the latest release workflow run |
 | Live watch screen looks frozen on Android's "Bulut" (cloud) mode specifically | The device's WebSocket host resolution predates the `isNativeAndroidApp()`/`CLOUD_API_URL` fix (see `AGENTS.md`'s Live watch connection notes) | Confirm the installed app build is recent enough to include that fix |
+
+---
+
+## Citation
+
+If you use or reference Anatolia-Sim's methodology (the genetics-and-
+observation-only emergence constraint, the mortality/hormone calibration
+approach, or any of the individual engine designs), please cite:
+
+```
+@software{anatoliasim2026,
+  title        = {Anatolia-Sim: An Agent-Based Civilization Simulator
+                   Testing Emergent Complexity from Genetic Inheritance
+                   and Observational Learning Alone},
+  author       = {{Bold Askeri Teknoloji ve Savunma Sanayi A.Ş.}},
+  year         = {2026},
+  url          = {https://github.com/atabeyler/anatolia.bold.sim},
+  note         = {Two genetically-defined founders and their descendants,
+                   modeled with no directly-programmed non-founder behavior
+                   -- language, consciousness, belief, technology, and
+                   culture emerge solely from Mendelian inheritance and
+                   observational learning}
+}
+```
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the history of notable changes.
 
 ---
 
