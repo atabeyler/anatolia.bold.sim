@@ -11,7 +11,7 @@ const LOCALE_MAP: Record<string, string> = { tr: 'tr-TR', en: 'en-US', de: 'de-D
 
 type UserRow = {
   id: string; user_code: string; first_name: string; last_name: string;
-  tc_no: string; email: string; role: string;
+  tc_no: string | null; email: string; role: string; username: string | null;
   is_approved: boolean; is_banned: boolean; ban_reason: string | null;
   created_at: string;
 };
@@ -29,7 +29,8 @@ function Badge({ label, color }: { label: string; color: string }) {
 // Masking by default (revealing only on explicit per-row click) keeps the
 // real value available to an admin who actually needs it, without leaving
 // it exposed by default.
-function maskTc(tc: string): string {
+function maskTc(tc: string | null): string {
+  if (!tc) return '—';
   if (tc.length <= 4) return '•'.repeat(tc.length);
   return '•'.repeat(tc.length - 4) + tc.slice(-4);
 }
@@ -44,6 +45,13 @@ export default function AdminPage() {
   const [banReason, setBanReason] = useState('');
   const [banTarget, setBanTarget] = useState<string | null>(null);
   const [revealedTc, setRevealedTc] = useState<Set<string>>(new Set());
+  const [newCode, setNewCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newIsAdmin, setNewIsAdmin] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const toggleTc = (id: string) => setRevealedTc(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -104,6 +112,26 @@ export default function AdminPage() {
   async function unban(id: string) {
     await axios.post(cloudUrl(`/api/admin/users/${id}/unban`), {}, { headers });
     load();
+  }
+
+  async function createUser() {
+    setCreateError(null);
+    setCreating(true);
+    try {
+      await axios.post(cloudUrl('/api/admin/users'), {
+        user_code: newCode,
+        password: newPassword,
+        username: newUsername.trim() || null,
+        email: newEmail.trim() || null,
+        is_admin: newIsAdmin,
+      }, { headers });
+      setNewCode(''); setNewPassword(''); setNewUsername(''); setNewEmail(''); setNewIsAdmin(false);
+      load();
+    } catch (err: any) {
+      setCreateError(err?.response?.data?.error ?? text(l, { tr: 'Kullanıcı oluşturulamadı.', en: 'Failed to create user.', de: 'Benutzer konnte nicht erstellt werden.', fr: "Échec de la création de l'utilisateur.", ar: 'فشل إنشاء المستخدم.' }));
+    } finally {
+      setCreating(false);
+    }
   }
 
   async function deleteUser(id: string) {
@@ -208,6 +236,77 @@ export default function AdminPage() {
           </button>
         </div>
 
+        {/* Yeni kullanıcı ekle */}
+        <div className="hud-panel mb-6 relative p-4 sm:p-5">
+          <span className="hud-corner-tr" /><span className="hud-corner-bl" />
+          <div className="font-orbitron font-bold tracking-widest mb-4" style={{ fontSize: 13, color: '#d4a838' }}>
+            {text(l, { tr: '+ YENİ KULLANICI EKLE', en: '+ ADD NEW USER', de: '+ NEUEN BENUTZER HINZUFÜGEN', fr: '+ AJOUTER UN UTILISATEUR', ar: '+ إضافة مستخدم جديد' })}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <input
+              className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+              style={{ fontSize: 14 }}
+              placeholder={text(l, { tr: 'Kullanıcı kodu', en: 'User code', de: 'Benutzercode', fr: 'Code utilisateur', ar: 'رمز المستخدم' })}
+              value={newCode}
+              onChange={e => setNewCode(e.target.value)}
+            />
+            <input
+              type="password"
+              className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+              style={{ fontSize: 14 }}
+              placeholder={text(l, { tr: 'Şifre (min 8 karakter)', en: 'Password (min 8 chars)', de: 'Passwort (min. 8 Zeichen)', fr: 'Mot de passe (min. 8 caractères)', ar: 'كلمة المرور (٨ أحرف على الأقل)' })}
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+            />
+            <input
+              className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+              style={{ fontSize: 14 }}
+              placeholder={text(l, { tr: 'Rumuz (opsiyonel)', en: 'Nickname (optional)', de: 'Spitzname (optional)', fr: 'Pseudo (facultatif)', ar: 'الاسم المستعار (اختياري)' })}
+              value={newUsername}
+              onChange={e => setNewUsername(e.target.value)}
+            />
+            <input
+              className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+              style={{ fontSize: 14 }}
+              placeholder={text(l, { tr: 'E-posta (bildirimler için)', en: 'Email (for notifications)', de: 'E-Mail (für Benachrichtigungen)', fr: 'E-mail (pour les notifications)', ar: 'البريد الإلكتروني (للإشعارات)' })}
+              value={newEmail}
+              onChange={e => setNewEmail(e.target.value)}
+            />
+          </div>
+          <label className="flex items-center gap-2 mb-3 cursor-pointer select-none">
+            <input type="checkbox" checked={newIsAdmin} onChange={e => setNewIsAdmin(e.target.checked)} />
+            <span className="font-share-tech" style={{ fontSize: 13, color: '#ffffff' }}>{text(l, { tr: 'Admin yetkisi', en: 'Admin permission', de: 'Admin-Berechtigung', fr: 'Droits admin', ar: 'صلاحيات المسؤول' })}</span>
+          </label>
+          <p className="font-share-tech mb-3" style={{ fontSize: 11, color: 'rgba(212,168,56,0.75)' }}>
+            {text(l, {
+              tr: 'E-posta girilirse, bu kullanıcı çevrimdışıyken de acil durum bildirimleri e-posta ile iletilir.',
+              en: 'If an email is provided, this user receives urgent notifications by email even while offline.',
+              de: 'Bei angegebener E-Mail erhält dieser Benutzer auch offline dringende Benachrichtigungen per E-Mail.',
+              fr: "Si un e-mail est fourni, cet utilisateur reçoit les notifications urgentes par e-mail même hors ligne.",
+              ar: 'إذا تم إدخال بريد إلكتروني، سيتلقى هذا المستخدم إشعارات عاجلة عبر البريد حتى عند عدم الاتصال.',
+            })}
+          </p>
+          {createError && (
+            <p className="font-share-tech mb-3" style={{ fontSize: 12, color: '#e05a5a' }}>{createError}</p>
+          )}
+          <button
+            onClick={createUser}
+            disabled={creating || !newCode.trim() || !newPassword}
+            className="w-full py-2.5 font-share-tech tracking-widest transition-colors"
+            style={{
+              fontSize: 13,
+              color: '#4f9ef7',
+              background: 'rgba(79,158,247,0.12)',
+              border: '1px solid rgba(79,158,247,0.4)',
+              opacity: creating || !newCode.trim() || !newPassword ? 0.5 : 1,
+              cursor: creating || !newCode.trim() || !newPassword ? 'default' : 'pointer',
+            }}>
+            {creating
+              ? text(l, { tr: 'EKLENİYOR…', en: 'ADDING…', de: 'WIRD HINZUGEFÜGT…', fr: 'AJOUT…', ar: 'جارٍ الإضافة…' })
+              : text(l, { tr: 'EKLE', en: 'ADD', de: 'HINZUFÜGEN', fr: 'AJOUTER', ar: 'إضافة' })}
+          </button>
+        </div>
+
         {/* Ban modal */}
         {banTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
@@ -305,7 +404,9 @@ export default function AdminPage() {
                       <span className="font-orbitron font-bold text-sim-accent" style={{ fontSize: 13 }}>{u.user_code}</span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-share-tech text-sim-text" style={{ fontSize: 14 }}>{u.first_name} {u.last_name}</span>
+                      <span className="font-share-tech text-sim-text" style={{ fontSize: 14 }}>
+                        {(u.first_name || u.last_name) ? `${u.first_name} ${u.last_name}`.trim() : (u.username ?? '—')}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <button
@@ -315,11 +416,11 @@ export default function AdminPage() {
                         style={{ fontSize: 13, color: '#8abda0' }}
                       >
                         {revealedTc.has(u.id) ? <Eye size={12} /> : <EyeOff size={12} />}
-                        {revealedTc.has(u.id) ? u.tc_no : maskTc(u.tc_no)}
+                        {revealedTc.has(u.id) ? (u.tc_no ?? '—') : maskTc(u.tc_no)}
                       </button>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-share-tech" style={{ fontSize: 13, color: '#8abda0' }}>{u.email}</span>
+                      <span className="font-share-tech" style={{ fontSize: 13, color: '#8abda0' }}>{u.email.endsWith('@no-email.internal') ? '—' : u.email}</span>
                     </td>
                     <td className="px-4 py-3">
                       {u.is_banned

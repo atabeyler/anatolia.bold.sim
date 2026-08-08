@@ -72,7 +72,7 @@ anatolia.bold.sim/
 │   │   ├── auth.rs         # Login/register/JWT, local-mode cloud vouching
 │   │   ├── db.rs           # Postgres/SQLite backend selection + queries
 │   │   ├── ws.rs           # Live-watch WebSocket broadcast
-│   │   ├── admin.rs        # Seed-admin, user approval/ban, audit
+│   │   ├── admin.rs        # Seed-admin, direct user creation, approval/ban, audit
 │   │   ├── god.rs          # God Mode interventions, cross-sim migration
 │   │   ├── analysis.rs     # Hypothesis Test / AI Analysis (Gemini + heuristic)
 │   │   ├── gemini.rs       # Google Gemini client, model fallback

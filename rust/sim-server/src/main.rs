@@ -248,7 +248,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .route("/wizard-defaults", get(auth::get_wizard_defaults_route).post(auth::set_wizard_defaults_route))
             .route("/pending-status/:userCode", get(auth::pending_status)))
         .nest("/api/admin", Router::new()
-            .route("/users", get(admin::list_users))
+            .route("/users", get(admin::list_users).post(admin::create_user))
             .route("/users/:id/approve", post(admin::approve_user))
             .route("/users/:id/reject", post(admin::reject_user))
             .route("/users/:id/ban", post(admin::ban_user))

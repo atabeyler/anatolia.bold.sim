@@ -8,14 +8,24 @@ use bcrypt::hash;
 use serde::Deserialize;
 use serde_json::json;
 use crate::{
-    auth::{decode_approval_token, require_admin, public_user},
-    db::{cleanup_simulation_data, delete_user, list_users as load_users, load_user_by_id, update_user_flag, AppState},
+    auth::{decode_approval_token, public_user, require_admin, validate_password},
+    db::{admin_create_user, cleanup_simulation_data, delete_user, list_users as load_users, load_user_by_id, update_user_flag, AppState},
     email::escape_html,
 };
 
 #[derive(Debug, Deserialize)]
 pub struct BanPayload {
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminCreateUserPayload {
+    pub user_code: String,
+    pub password: String,
+    pub username: Option<String>,
+    pub email: Option<String>,
+    #[serde(default)]
+    pub is_admin: bool,
 }
 
 /// Plain `!=` on the seed token would let a network attacker recover it
@@ -43,6 +53,7 @@ pub async fn list_users(State(state): State<AppState>, headers: axum::http::Head
                     json!({
                         "id": user.id,
                         "user_code": user.user_code,
+                        "username": user.username,
                         "first_name": user.first_name,
                         "last_name": user.last_name,
                         "tc_no": user.tc_no,
@@ -60,6 +71,64 @@ pub async fn list_users(State(state): State<AppState>, headers: axum::http::Head
             Json(payload).into_response()
         }
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    }
+}
+
+// Distinct from self-service `auth::register`: that flow always lands a new
+// account in role "pending"/is_approved=false, awaiting this same admin's
+// review. An admin creating an account directly already *is* that review --
+// the account is immediately active, and skips the national-ID/full-name
+// fields registration requires (this route has no KYC purpose, it's for
+// accounts the admin is vouching for themselves).
+pub async fn create_user(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<AdminCreateUserPayload>,
+) -> impl IntoResponse {
+    if !require_admin(&state, &headers).await {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
+    }
+
+    let code = payload.user_code.trim().to_uppercase();
+    if !(4..=20).contains(&code.len()) || !code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "User code must be 4-20 characters, letters and digits only."}))).into_response();
+    }
+
+    if let Some(err) = validate_password(&payload.password) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
+    }
+
+    let username = payload.username.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    // Login is by user_code, not email (see auth::LoginPayload), and the
+    // form this backs marks email as "for notifications" -- optional. The
+    // `email` column is still UNIQUE NOT NULL, so a skipped email still
+    // needs *some* stored value; user_code is already guaranteed unique, so
+    // deriving the placeholder from it can't collide with a real address or
+    // another placeholder.
+    let email = match payload.email.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(e) => e.to_lowercase(),
+        None => format!("{}@no-email.internal", code.to_lowercase()),
+    };
+
+    let role = if payload.is_admin { "admin" } else { "user" };
+
+    let hashed = match hash(&payload.password, bcrypt::DEFAULT_COST) {
+        Ok(v) => v,
+        Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+    };
+
+    match admin_create_user(&state.backend, &code, username, &email, &hashed, role).await {
+        Ok(Some(user)) => (StatusCode::CREATED, Json(json!({"message": "User created.", "user": public_user(&user)}))).into_response(),
+        Ok(None) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to create user."}))).into_response(),
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("unique") || msg.contains("UNIQUE") {
+                (StatusCode::CONFLICT, Json(json!({"error": "This user code or email is already in use."}))).into_response()
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to create user."}))).into_response()
+            }
+        }
     }
 }
 

@@ -1074,7 +1074,26 @@ an existing panel instead:
 /api/aria        — AI hypothesis evaluation
 /api/analysis    — statistical analysis
 /api/admin       — seed-admin
+                   /users (POST) — admin creates a user account directly (see below)
 ```
+
+**Admin-created accounts:** `POST /api/admin/users` (`admin::create_user`) lets
+an admin create a login directly — user code, password, an optional nickname
+(`username`), and an optional email (used only for notifications; login is
+always by user code, never email) — with an "Admin yetkisi" flag for the new
+account's own role. This is distinct from self-service `auth::register`,
+which always lands a new account as `role: "pending"`/unapproved and requires
+first/last name plus an 11-digit national ID for the admin to review
+afterward. An admin-created account skips all of that (no KYC purpose here —
+the admin creating it already is the approval) and is `is_approved: true`
+immediately. It's a plain INSERT (`db::admin_create_user`), not the upsert
+`create_or_update_user` registration/seed-admin share, so a reused user code
+fails with a conflict instead of silently overwriting an existing account's
+password/role. Since `email` is `UNIQUE NOT NULL` in the schema but this
+form's email is optional, an omitted email is stored as a
+`{user_code}@no-email.internal` placeholder (safe to derive since user_code
+is already unique) — `AdminPage.tsx`'s user table renders that placeholder
+domain as `—` rather than showing it as a real address.
 
 **Local ⇄ cloud transfer:** `POST /:id/upload-to-cloud` (`routes::upload_to_cloud`,
 local/SQLite backend only) and its mirror `POST /:id/download-from-cloud`
