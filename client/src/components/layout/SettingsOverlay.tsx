@@ -55,7 +55,7 @@ function SliderRow({ label, value, disabled, onChange }: { label: string; value:
 type CheckState = 'idle' | 'checking' | 'up-to-date' | 'found' | 'error';
 
 export default function SettingsOverlay({ isOpen, onClose }: Props) {
-  const { lang, setLang, theme, toggleTheme, soundSettings, setSoundSettings, globeAutoRotate, setGlobeAutoRotate, updateReady, setUpdateReady, user, accessToken, setUser } = useSimStore();
+  const { lang, setLang, soundSettings, setSoundSettings, globeAutoRotate, setGlobeAutoRotate, updateReady, setUpdateReady, user, accessToken, setUser } = useSimStore();
   const activeLang = lang as LangCode;
   const rtl = activeLang === 'ar';
   const [tab, setTab] = useState<Tab>(user ? 'profile' : 'language');
@@ -334,27 +334,6 @@ export default function SettingsOverlay({ isOpen, onClose }: Props) {
 
         {tab === 'display' && (
           <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <ToggleRow rtl={rtl}
-              label={text(activeLang, {
-                tr: 'Açık Tema',
-                en: 'Light Theme',
-                de: 'Helles Design',
-                fr: 'Thème clair',
-                ar: 'السمة الفاتحة',
-              })}
-              checked={theme === 'light'}
-              onChange={() => toggleTheme()}
-            />
-            <span style={{ fontSize: 12, color: '#6a9a78', lineHeight: 1.5 }}>
-              {text(activeLang, {
-                tr: 'Şu an yalnızca Bulut/Yerel seçim ekranı ve giriş ekranını etkiler; uygulamanın geri kalanı koyu temada kalır.',
-                en: 'Currently only affects the Cloud/Local choice screen and the login screen; the rest of the app stays dark.',
-                de: 'Betrifft derzeit nur den Cloud-/Lokal-Auswahlbildschirm und den Anmeldebildschirm; der Rest der App bleibt dunkel.',
-                fr: "N'affecte actuellement que l'écran de choix Cloud/Local et l'écran de connexion ; le reste de l'application reste sombre.",
-                ar: 'يؤثر حالياً فقط على شاشة اختيار السحابة/المحلي وشاشة تسجيل الدخول؛ يبقى باقي التطبيق داكناً.',
-              })}
-            </span>
-            <div style={{ height: 1, background: '#0a1a10' }} />
             <ToggleRow rtl={rtl}
               label={text(activeLang, {
                 tr: 'Dünyayı Otomatik Döndür',

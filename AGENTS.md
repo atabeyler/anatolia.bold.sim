@@ -1022,27 +1022,6 @@ gained two fields to support this -- `tc_no` and `nickname` (the real
 the user_code, kept under that name since every existing caller already
 treats it that way) -- neither was exposed to the client at all before this.
 
-**Light/dark theme (choice screen + login only):** `useSimStore`'s
-`theme: 'dark' | 'light'` (persisted to `localStorage`, toggled via a
-"Light Theme" row in `SettingsOverlay.tsx`'s Display tab) currently only
-repaints `BrowserModeGate.tsx` (the Cloud/Local choice screen) and
-`LoginPage.tsx`. It deliberately does not extend to the rest of the app --
-the simulation UI's dark/neon HUD styling is baked into well over a
-thousand individual inline color values across dozens of files, not a
-handful of theme tokens, so a full retrofit was scoped out. The two themed
-screens' own heavy canvas animations (`LoginPage.tsx`'s Matrix-rain and
-starfield backgrounds) needed their draw logic itself branched on `dark`,
-not just a CSS override -- their color math (a translucent black
-clear-rect for the rain's fade trail, near-white "bright" characters,
-light-toned stars) assumes a black backdrop and would smear/wash out
-against a light one, so light mode uses its own darker/more saturated
-palette and a light-tinted clear-rect instead of hiding the animations
-outright. Elsewhere (`BrowserModeGate.tsx`'s choice cards, `LoginPage.tsx`'s
-`hud-panel` form) the existing dark, semi-transparent surfaces are left
-as-is and simply read as a "dark glass card" floating on the light page --
-only bare text sitting directly on the page background (headings, the
-system-status readout, muted captions) needed an explicit light-mode color.
-
 **Admin-created accounts:** `POST /api/admin/users` (`admin::create_user`) lets
 an admin create a login directly — first/last name, an 11-digit national ID
 (same format/uniqueness rules as self-service `auth::register`), user code,

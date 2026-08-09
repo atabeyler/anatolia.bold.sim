@@ -4,7 +4,6 @@ import { isNativeAndroidApp } from '../../utils/nativeMode';
 import { isTauriDesktop } from '../../utils/desktopUpdate';
 import { isLocalOrigin } from '../../utils/cloud';
 import { activateWasmLocalMode } from '../../wasmLocal/mode';
-import { useSimStore } from '../../store/simStore';
 
 // Plain-web counterpart to Android's NativeModeGate and Desktop's own
 // pre-React dist-chooser/index.html -- same "Cloud or Local" choice, same
@@ -122,7 +121,6 @@ function ScrambleText({ text, active, delay = 0 }: { text: string; active: boole
 }
 
 export default function BrowserModeGate({ children }: { children: React.ReactNode }) {
-  const dark = useSimStore(s => s.theme) !== 'light';
   const [choice, setChoice] = useState<'cloud' | 'local' | null>(() => getSavedChoice());
   const [revealed, setRevealed] = useState(false);
 
@@ -153,8 +151,7 @@ export default function BrowserModeGate({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden flex items-center justify-center scanlines px-6"
-      style={{ background: dark ? '#030310' : '#eef1f7' }}>
+    <div className="relative w-screen h-screen overflow-hidden flex items-center justify-center bg-[#030310] scanlines px-6">
       <HexGrid />
       <ScanBar />
 
@@ -178,18 +175,13 @@ export default function BrowserModeGate({ children }: { children: React.ReactNod
         </div>
 
         <h1 className="font-orbitron font-bold tracking-[0.2em] flicker"
-          style={{
-            fontSize: 'clamp(24px, 6vw, 34px)',
-            color: dark ? '#00e887' : '#0a8a54',
-            textShadow: dark ? '0 0 20px rgba(0,232,135,0.8), 0 0 40px rgba(0,232,135,0.4)' : 'none',
-          }}>
+          style={{ fontSize: 'clamp(24px, 6vw, 34px)', color: '#00e887', textShadow: '0 0 20px rgba(0,232,135,0.8), 0 0 40px rgba(0,232,135,0.4)' }}>
           <ScrambleText text="ANATOLIA-SIM" active={revealed} />
         </h1>
-        <p className="font-share-tech tracking-[0.4em] mt-1 mb-4" style={{ fontSize: 16, color: dark ? '#4f6ef7' : '#3652c4' }}>
+        <p className="font-share-tech tracking-[0.4em] mt-1 mb-4" style={{ fontSize: 16, color: '#4f6ef7' }}>
           <ScrambleText text="CIVILIZATION ENGINE" active={revealed} delay={350} />
         </p>
-        <p className={`font-share-tech tracking-wide mb-6 boot-in ${dark ? 'text-sim-muted' : ''}`}
-          style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 360, animationDelay: '900ms', color: dark ? undefined : '#4a5a72' }}>
+        <p className="font-share-tech text-sim-muted tracking-wide mb-6 boot-in" style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 360, animationDelay: '900ms' }}>
           Two founders. One genome. Watch a civilization emerge from nothing
           but inheritance and observation.
         </p>
