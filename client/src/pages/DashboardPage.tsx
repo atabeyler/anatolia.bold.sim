@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { text, type LangCode } from '../utils/i18n';
 import FooterBar from '../components/layout/FooterBar';
 import { useNavigate } from 'react-router-dom';
-import { Globe, Plus, Play, LogOut, BarChart2, Trash2, DatabaseZap, Download, UploadCloud } from 'lucide-react';
+import { Globe, Plus, Play, LogOut, BarChart2, Trash2, DatabaseZap, Download, UploadCloud, ShieldCheck } from 'lucide-react';
 import axios from 'axios';
 import { useSimStore } from '../store/simStore';
 import SimCreationWizard from '../components/SimCreationWizard';
@@ -397,6 +397,14 @@ export default function DashboardPage() {
               <DatabaseZap size={13} />
               <span className="hidden sm:inline">{cleaning ? text(lang as LangCode, { tr: 'TEMİZLENİYOR...', en: 'CLEANING...', de: 'BEREINIGT...', fr: 'NETTOYAGE...', ar: 'جارٍ التنظيف...' }) : text(lang as LangCode, { tr: 'DB TEMİZLE', en: 'CLEAN DB', de: 'DB BEREINIGEN', fr: 'NETTOYER DB', ar: 'تنظيف قاعدة البيانات' })}</span>
             </button>
+            {user?.role === 'admin' && (
+              <button onClick={() => navigate('/admin')} title={text(lang as LangCode, { tr: 'Yönetim Paneli', en: 'Admin Panel', de: 'Admin-Panel', fr: "Panneau d'administration", ar: 'لوحة الإدارة' })}
+                className="flex items-center gap-1.5 transition-colors"
+                style={{ fontFamily: 'Share Tech Mono,monospace', fontSize: 13, letterSpacing: '0.08em', color: 'rgba(200,34,34,0.85)', border: 'none', background: 'transparent', padding: '4px 8px', cursor: 'pointer' }}>
+                <ShieldCheck size={13} />
+                <span className="hidden sm:inline">{text(lang as LangCode, { tr: 'YÖNETİM', en: 'ADMIN', de: 'ADMIN', fr: 'ADMIN', ar: 'الإدارة' })}</span>
+              </button>
+            )}
             <span className="hidden sm:block font-share-tech tracking-widest font-bold" style={{ fontSize: 14, color: '#ffffff' }}>{user?.username?.toUpperCase()}</span>
             <button onClick={() => { logout(); navigate('/login'); }}
               className="flex items-center gap-1.5 transition-colors"
