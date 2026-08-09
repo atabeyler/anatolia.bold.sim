@@ -1001,25 +1001,48 @@ an existing panel instead:
 /api/analysis    — statistical analysis
 /api/admin       — seed-admin
                    /users (POST) — admin creates a user account directly (see below)
+                   /users/:id (PUT) — admin edits an existing user's own fields (see below)
 ```
 
 **Admin-created accounts:** `POST /api/admin/users` (`admin::create_user`) lets
-an admin create a login directly — user code, password, an optional nickname
-(`username`), and an optional email (used only for notifications; login is
-always by user code, never email) — with an "Admin yetkisi" flag for the new
-account's own role. This is distinct from self-service `auth::register`,
-which always lands a new account as `role: "pending"`/unapproved and requires
-first/last name plus an 11-digit national ID for the admin to review
-afterward. An admin-created account skips all of that (no KYC purpose here —
-the admin creating it already is the approval) and is `is_approved: true`
-immediately. It's a plain INSERT (`db::admin_create_user`), not the upsert
-`create_or_update_user` registration/seed-admin share, so a reused user code
-fails with a conflict instead of silently overwriting an existing account's
-password/role. Since `email` is `UNIQUE NOT NULL` in the schema but this
-form's email is optional, an omitted email is stored as a
-`{user_code}@no-email.internal` placeholder (safe to derive since user_code
-is already unique) — `AdminPage.tsx`'s user table renders that placeholder
-domain as `—` rather than showing it as a real address.
+an admin create a login directly — first/last name, an 11-digit national ID
+(same format/uniqueness rules as self-service `auth::register`), user code,
+password, an optional nickname (`username`), and an optional email (used
+only for notifications; login is always by user code, never email) — with an
+"Admin yetkisi" flag for the new account's own role. This is distinct from
+`auth::register` in one way only: it skips the `role: "pending"`/unapproved
+wait, landing `is_approved: true` immediately (no KYC purpose in the
+skip — the admin creating the account already is the approval), while still
+collecting the same name/national-ID fields registration does, for the same
+data-quality/recordkeeping reason. It's a plain INSERT (`db::admin_create_user`),
+not the upsert `create_or_update_user` registration/seed-admin share, so a
+reused user code, national ID, or email fails with a conflict instead of
+silently overwriting an existing account's password/role. Since `email` is
+`UNIQUE NOT NULL` in the schema but this form's email is optional, an
+omitted email is stored as a `{user_code}@no-email.internal` placeholder
+(safe to derive since user_code is already unique) — `AdminPage.tsx`'s user
+table renders that placeholder domain as `—` rather than showing it as a
+real address.
+
+**Editing an existing user:** `PUT /api/admin/users/:id`
+(`admin::update_user_details` → `db::admin_update_user`) is the pencil/edit
+action on `AdminPage.tsx`'s user table — it rewrites the same field set
+`admin_create_user` accepts (name, national ID, user code, nickname, email,
+admin flag) on a row that already exists, rather than inserting a new one.
+The password field is the one exception: left blank, it's `None` on the
+wire and the update leaves `password_hash` untouched via `COALESCE`, so
+correcting an existing user's name/TC no doesn't force a password reset in
+the same action. This is distinct from `update_user_flag` (approve/reject/
+ban/unban), which only ever flips booleans and never rewrites identity
+fields — the two exist side by side because ban/approve are one-click
+moderation actions with their own dedicated buttons, while a name/TC-no
+correction needs a form.
+
+`AdminPage.tsx`'s user list is a single unified table (pending registrations
+sorted to the top, everyone else newest-first below) rather than separate
+Pending/Approved/All tabs — every row carries the same edit/ban/delete
+actions (plus approve/reject only while still pending), so switching tabs
+was pure navigation overhead once every action lives on the row itself.
 
 **Local ⇄ cloud transfer:** `POST /:id/upload-to-cloud` (`routes::upload_to_cloud`,
 local/SQLite backend only) and its mirror `POST /:id/download-from-cloud`

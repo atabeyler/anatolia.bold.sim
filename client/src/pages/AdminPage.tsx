@@ -3,7 +3,7 @@ import FooterBar from '../components/layout/FooterBar';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useSimStore } from '../store/simStore';
-import { LogOut, CheckCircle, XCircle, Ban, Trash2, ShieldOff, Clock, Eye, EyeOff } from 'lucide-react';
+import { LogOut, CheckCircle, XCircle, Ban, Trash2, ShieldOff, Clock, Eye, EyeOff, Pencil } from 'lucide-react';
 import { text, type LangCode } from '../utils/i18n';
 import { cloudUrl } from '../utils/cloud';
 
@@ -41,17 +41,30 @@ export default function AdminPage() {
   const l = lang as LangCode;
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loadError, setLoadError] = useState(false);
-  const [tab, setTab] = useState<'pending' | 'approved' | 'all'>('pending');
   const [banReason, setBanReason] = useState('');
   const [banTarget, setBanTarget] = useState<string | null>(null);
   const [revealedTc, setRevealedTc] = useState<Set<string>>(new Set());
   const [newCode, setNewCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [newFirstName, setNewFirstName] = useState('');
+  const [newLastName, setNewLastName] = useState('');
+  const [newTcNo, setNewTcNo] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newIsAdmin, setNewIsAdmin] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editTarget, setEditTarget] = useState<UserRow | null>(null);
+  const [editCode, setEditCode] = useState('');
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [editTcNo, setEditTcNo] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editIsAdmin, setEditIsAdmin] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
   const toggleTc = (id: string) => setRevealedTc(prev => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -121,16 +134,57 @@ export default function AdminPage() {
       await axios.post(cloudUrl('/api/admin/users'), {
         user_code: newCode,
         password: newPassword,
+        first_name: newFirstName,
+        last_name: newLastName,
+        tc_no: newTcNo,
         username: newUsername.trim() || null,
         email: newEmail.trim() || null,
         is_admin: newIsAdmin,
       }, { headers });
-      setNewCode(''); setNewPassword(''); setNewUsername(''); setNewEmail(''); setNewIsAdmin(false);
+      setNewCode(''); setNewPassword(''); setNewFirstName(''); setNewLastName(''); setNewTcNo('');
+      setNewUsername(''); setNewEmail(''); setNewIsAdmin(false);
       load();
     } catch (err: any) {
       setCreateError(err?.response?.data?.error ?? text(l, { tr: 'Kullanıcı oluşturulamadı.', en: 'Failed to create user.', de: 'Benutzer konnte nicht erstellt werden.', fr: "Échec de la création de l'utilisateur.", ar: 'فشل إنشاء المستخدم.' }));
     } finally {
       setCreating(false);
+    }
+  }
+
+  function openEdit(u: UserRow) {
+    setEditTarget(u);
+    setEditCode(u.user_code ?? '');
+    setEditFirstName(u.first_name ?? '');
+    setEditLastName(u.last_name ?? '');
+    setEditTcNo(u.tc_no ?? '');
+    setEditUsername(u.username ?? '');
+    setEditEmail(u.email.endsWith('@no-email.internal') ? '' : u.email);
+    setEditPassword('');
+    setEditIsAdmin(u.role === 'admin');
+    setEditError(null);
+  }
+
+  async function saveEdit() {
+    if (!editTarget) return;
+    setEditError(null);
+    setEditSaving(true);
+    try {
+      await axios.put(cloudUrl(`/api/admin/users/${editTarget.id}`), {
+        user_code: editCode,
+        first_name: editFirstName,
+        last_name: editLastName,
+        tc_no: editTcNo,
+        username: editUsername.trim() || null,
+        email: editEmail.trim() || null,
+        password: editPassword.trim() || null,
+        is_admin: editIsAdmin,
+      }, { headers });
+      setEditTarget(null);
+      load();
+    } catch (err: any) {
+      setEditError(err?.response?.data?.error ?? text(l, { tr: 'Kullanıcı güncellenemedi.', en: 'Failed to update user.', de: 'Benutzer konnte nicht aktualisiert werden.', fr: "Échec de la mise à jour de l'utilisateur.", ar: 'فشل تحديث المستخدم.' }));
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -141,8 +195,16 @@ export default function AdminPage() {
   }
 
   const pending = users.filter(u => !u.is_approved && u.role === 'pending');
-  const approved = users.filter(u => u.is_approved);
-  const displayed = tab === 'pending' ? pending : tab === 'approved' ? approved : users;
+  // A single, unified list instead of separate pending/approved/all tabs --
+  // pending registrations (the ones actually needing admin action) surface
+  // at the top rather than being hidden behind a tab switch, with the rest
+  // ordered newest-first below them.
+  const displayed = [...users].sort((a, b) => {
+    const aPending = !a.is_approved && a.role === 'pending';
+    const bPending = !b.is_approved && b.role === 'pending';
+    if (aPending !== bPending) return aPending ? -1 : 1;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
 
   return (
     <div className="min-h-screen text-sim-text flex flex-col" style={{ background: '#030310' }}>
@@ -201,27 +263,12 @@ export default function AdminPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8 relative flex-1 w-full pb-16">
-        {/* Tabs */}
-        <div className="hud-panel mb-6 relative flex flex-wrap items-stretch">
+        {/* Header bar */}
+        <div className="hud-panel mb-6 relative flex flex-wrap items-center px-4 py-2.5">
           <span className="hud-corner-tr" /><span className="hud-corner-bl" />
-          {([
-            ['pending',  text(l, { tr: 'BEKLEYEN', en: 'PENDING', de: 'AUSSTEHEND', fr: 'EN ATTENTE', ar: 'قيد الانتظار' }),     pending.length],
-            ['approved', text(l, { tr: 'ONAYLANANLAR', en: 'APPROVED', de: 'GENEHMIGT', fr: 'APPROUVÉS', ar: 'موافَق عليهم' }), approved.length],
-            ['all',      text(l, { tr: 'TÜMÜ', en: 'ALL', de: 'ALLE', fr: 'TOUS', ar: 'الكل' }),         users.length],
-          ] as const).map(([key, label, count]) => (
-            <button key={key} onClick={() => setTab(key)}
-              className="font-share-tech tracking-widest px-4 py-2 transition-all"
-              style={{
-                fontSize: 13,
-                background: tab === key ? 'rgba(200,34,34,0.18)' : 'transparent',
-                border: 'none',
-                borderRight: '1px solid rgba(200,34,34,0.25)',
-                boxShadow: tab === key ? 'inset 0 -2px 0 rgba(200,34,34,0.8)' : 'none',
-                color: tab === key ? '#ffffff' : 'rgba(255,255,255,0.45)',
-              }}>
-              {label} ({count})
-            </button>
-          ))}
+          <span className="font-share-tech tracking-widest" style={{ fontSize: 13, color: '#ffffff' }}>
+            {text(l, { tr: 'KULLANICILAR', en: 'USERS', de: 'BENUTZER', fr: 'UTILISATEURS', ar: 'المستخدمون' })} ({users.length})
+          </span>
           <div className="flex-1" />
           <button onClick={() => navigate('/')}
             className="font-share-tech tracking-widest px-4 py-2 transition-all"
@@ -243,6 +290,28 @@ export default function AdminPage() {
             {text(l, { tr: '+ YENİ KULLANICI EKLE', en: '+ ADD NEW USER', de: '+ NEUEN BENUTZER HINZUFÜGEN', fr: '+ AJOUTER UN UTILISATEUR', ar: '+ إضافة مستخدم جديد' })}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <input
+              className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+              style={{ fontSize: 14 }}
+              placeholder={text(l, { tr: 'Ad', en: 'First name', de: 'Vorname', fr: 'Prénom', ar: 'الاسم' })}
+              value={newFirstName}
+              onChange={e => setNewFirstName(e.target.value)}
+            />
+            <input
+              className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+              style={{ fontSize: 14 }}
+              placeholder={text(l, { tr: 'Soyad', en: 'Last name', de: 'Nachname', fr: 'Nom', ar: 'اللقب' })}
+              value={newLastName}
+              onChange={e => setNewLastName(e.target.value)}
+            />
+            <input
+              className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+              style={{ fontSize: 14 }}
+              placeholder={text(l, { tr: 'TC Kimlik No (11 hane)', en: 'National ID (11 digits)', de: 'Ausweisnummer (11 Ziffern)', fr: "N° d'identité (11 chiffres)", ar: 'رقم الهوية (11 رقمًا)' })}
+              value={newTcNo}
+              maxLength={11}
+              onChange={e => setNewTcNo(e.target.value.replace(/\D/g, ''))}
+            />
             <input
               className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
               style={{ fontSize: 14 }}
@@ -291,15 +360,15 @@ export default function AdminPage() {
           )}
           <button
             onClick={createUser}
-            disabled={creating || !newCode.trim() || !newPassword}
+            disabled={creating || !newCode.trim() || !newPassword || !newFirstName.trim() || !newLastName.trim() || newTcNo.length !== 11}
             className="w-full py-2.5 font-share-tech tracking-widest transition-colors"
             style={{
               fontSize: 13,
               color: '#4f9ef7',
               background: 'rgba(79,158,247,0.12)',
               border: '1px solid rgba(79,158,247,0.4)',
-              opacity: creating || !newCode.trim() || !newPassword ? 0.5 : 1,
-              cursor: creating || !newCode.trim() || !newPassword ? 'default' : 'pointer',
+              opacity: creating || !newCode.trim() || !newPassword || !newFirstName.trim() || !newLastName.trim() || newTcNo.length !== 11 ? 0.5 : 1,
+              cursor: creating || !newCode.trim() || !newPassword || !newFirstName.trim() || !newLastName.trim() || newTcNo.length !== 11 ? 'default' : 'pointer',
             }}>
             {creating
               ? text(l, { tr: 'EKLENİYOR…', en: 'ADDING…', de: 'WIRD HINZUGEFÜGT…', fr: 'AJOUT…', ar: 'جارٍ الإضافة…' })
@@ -326,6 +395,72 @@ export default function AdminPage() {
                   {text(l, { tr: 'ENGELLE', en: 'BAN', de: 'SPERREN', fr: 'BANNIR', ar: 'حظر' })}
                 </button>
                 <button onClick={() => { setBanTarget(null); setBanReason(''); }}
+                  className="flex-1 py-2 font-share-tech tracking-widest text-sim-muted"
+                  style={{ fontSize: 13, background: 'rgba(22,22,58,0.5)', border: '1px solid rgba(79,110,247,0.15)' }}>
+                  {text(l, { tr: 'İPTAL', en: 'CANCEL', de: 'ABBRECHEN', fr: 'ANNULER', ar: 'إلغاء' })}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit modal */}
+        {editTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+            <div className="w-full max-w-md p-6" style={{ background: 'rgba(4,4,15,0.98)', border: '1px solid rgba(79,158,247,0.4)', maxHeight: '90vh', overflowY: 'auto' }}>
+              <div className="font-orbitron text-sim-accent font-bold tracking-widest mb-4" style={{ fontSize: 14 }}>
+                {text(l, { tr: 'KULLANICIYI DÜZENLE', en: 'EDIT USER', de: 'BENUTZER BEARBEITEN', fr: "MODIFIER L'UTILISATEUR", ar: 'تعديل المستخدم' })}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <input className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+                  style={{ fontSize: 14 }}
+                  placeholder={text(l, { tr: 'Ad', en: 'First name', de: 'Vorname', fr: 'Prénom', ar: 'الاسم' })}
+                  value={editFirstName} onChange={e => setEditFirstName(e.target.value)} />
+                <input className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+                  style={{ fontSize: 14 }}
+                  placeholder={text(l, { tr: 'Soyad', en: 'Last name', de: 'Nachname', fr: 'Nom', ar: 'اللقب' })}
+                  value={editLastName} onChange={e => setEditLastName(e.target.value)} />
+                <input className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+                  style={{ fontSize: 14 }}
+                  placeholder={text(l, { tr: 'TC Kimlik No (11 hane)', en: 'National ID (11 digits)', de: 'Ausweisnummer (11 Ziffern)', fr: "N° d'identité (11 chiffres)", ar: 'رقم الهوية (11 رقمًا)' })}
+                  value={editTcNo} maxLength={11} onChange={e => setEditTcNo(e.target.value.replace(/\D/g, ''))} />
+                <input className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+                  style={{ fontSize: 14 }}
+                  placeholder={text(l, { tr: 'Kullanıcı kodu', en: 'User code', de: 'Benutzercode', fr: 'Code utilisateur', ar: 'رمز المستخدم' })}
+                  value={editCode} onChange={e => setEditCode(e.target.value)} />
+                <input className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+                  style={{ fontSize: 14 }}
+                  placeholder={text(l, { tr: 'Rumuz (opsiyonel)', en: 'Nickname (optional)', de: 'Spitzname (optional)', fr: 'Pseudo (facultatif)', ar: 'الاسم المستعار (اختياري)' })}
+                  value={editUsername} onChange={e => setEditUsername(e.target.value)} />
+                <input className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent"
+                  style={{ fontSize: 14 }}
+                  placeholder={text(l, { tr: 'E-posta (bildirimler için)', en: 'Email (for notifications)', de: 'E-Mail (für Benachrichtigungen)', fr: 'E-mail (pour les notifications)', ar: 'البريد الإلكتروني (للإشعارات)' })}
+                  value={editEmail} onChange={e => setEditEmail(e.target.value)} />
+                <input type="password" className="w-full bg-sim-bg border border-sim-border px-3 py-2 font-share-tech text-sim-text focus:outline-none focus:border-sim-accent sm:col-span-2"
+                  style={{ fontSize: 14 }}
+                  placeholder={text(l, { tr: 'Yeni şifre (opsiyonel, boş bırakılırsa değişmez)', en: 'New password (optional, leave blank to keep current)', de: 'Neues Passwort (optional)', fr: 'Nouveau mot de passe (facultatif)', ar: 'كلمة مرور جديدة (اختياري)' })}
+                  value={editPassword} onChange={e => setEditPassword(e.target.value)} />
+              </div>
+              <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
+                <input type="checkbox" checked={editIsAdmin} onChange={e => setEditIsAdmin(e.target.checked)} />
+                <span className="font-share-tech" style={{ fontSize: 13, color: '#ffffff' }}>{text(l, { tr: 'Admin yetkisi', en: 'Admin permission', de: 'Admin-Berechtigung', fr: 'Droits admin', ar: 'صلاحيات المسؤول' })}</span>
+              </label>
+              {editError && (
+                <p className="font-share-tech mb-3" style={{ fontSize: 12, color: '#e05a5a' }}>{editError}</p>
+              )}
+              <div className="flex gap-2">
+                <button onClick={saveEdit}
+                  disabled={editSaving || !editCode.trim() || !editFirstName.trim() || !editLastName.trim() || editTcNo.length !== 11}
+                  className="flex-1 py-2 font-share-tech tracking-widest text-sim-accent"
+                  style={{
+                    fontSize: 13, background: 'rgba(79,158,247,0.15)', border: '1px solid rgba(79,158,247,0.4)',
+                    opacity: editSaving || !editCode.trim() || !editFirstName.trim() || !editLastName.trim() || editTcNo.length !== 11 ? 0.5 : 1,
+                  }}>
+                  {editSaving
+                    ? text(l, { tr: 'KAYDEDİLİYOR…', en: 'SAVING…', de: 'WIRD GESPEICHERT…', fr: 'ENREGISTREMENT…', ar: 'جارٍ الحفظ…' })
+                    : text(l, { tr: 'KAYDET', en: 'SAVE', de: 'SPEICHERN', fr: 'ENREGISTRER', ar: 'حفظ' })}
+                </button>
+                <button onClick={() => setEditTarget(null)}
                   className="flex-1 py-2 font-share-tech tracking-widest text-sim-muted"
                   style={{ fontSize: 13, background: 'rgba(22,22,58,0.5)', border: '1px solid rgba(79,110,247,0.15)' }}>
                   {text(l, { tr: 'İPTAL', en: 'CANCEL', de: 'ABBRECHEN', fr: 'ANNULER', ar: 'إلغاء' })}
@@ -437,6 +572,10 @@ export default function AdminPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
+                        <button onClick={() => openEdit(u)} title={text(l, { tr: 'Düzelt', en: 'Edit', de: 'Bearbeiten', fr: 'Modifier', ar: 'تعديل' })}
+                          className="p-1.5 text-sim-accent hover:bg-sim-accent/10 transition-colors rounded">
+                          <Pencil size={16} />
+                        </button>
                         {!u.is_approved && u.role !== 'admin' && (<>
                           <button onClick={() => approve(u.id)} title={text(l, { tr: 'Onayla', en: 'Approve', de: 'Genehmigen', fr: 'Approuver', ar: 'موافقة' })}
                             className="p-1.5 text-sim-green hover:bg-sim-green/10 transition-colors rounded">

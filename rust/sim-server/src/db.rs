@@ -2906,6 +2906,9 @@ pub async fn admin_create_user(
     backend: &DbBackend,
     user_code: &str,
     username: Option<&str>,
+    first_name: &str,
+    last_name: &str,
+    tc_no: &str,
     email: &str,
     password_hash: &str,
     role: &str,
@@ -2914,7 +2917,7 @@ pub async fn admin_create_user(
         let row = sqlx::query_as::<_, UserRow>(
             r#"
             INSERT INTO users (user_code, username, first_name, last_name, tc_no, email, password_hash, role, is_approved)
-            VALUES ($1, $2, '', '', NULL, $3, $4, $5, true)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
             RETURNING
                 id::text AS id,
                 user_code,
@@ -2935,6 +2938,9 @@ pub async fn admin_create_user(
         )
         .bind(user_code)
         .bind(username)
+        .bind(first_name)
+        .bind(last_name)
+        .bind(tc_no)
         .bind(email)
         .bind(password_hash)
         .bind(role)
@@ -2947,7 +2953,7 @@ pub async fn admin_create_user(
         let row = sqlx::query_as::<_, UserRow>(
             r#"
             INSERT INTO users (id, user_code, username, first_name, last_name, tc_no, email, password_hash, role, is_approved, is_banned, ban_reason, email_verified)
-            VALUES (?, ?, ?, '', '', NULL, ?, ?, ?, 1, 0, NULL, 0)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, 0)
             RETURNING
                 id,
                 user_code,
@@ -2969,12 +2975,132 @@ pub async fn admin_create_user(
         .bind(Uuid::new_v4().to_string())
         .bind(user_code)
         .bind(username)
+        .bind(first_name)
+        .bind(last_name)
+        .bind(tc_no)
         .bind(email)
         .bind(password_hash)
         .bind(role)
         .fetch_one(pool)
         .await?;
         return Ok(Some(row));
+    }
+
+    Ok(None)
+}
+
+/// Admin's "edit" (pencil) action on an existing row: unlike
+/// `update_user_flag` (which only ever flips approval/ban/role booleans),
+/// this rewrites the actual identity fields -- the same set `admin_create_user`
+/// accepts for a brand-new account, applied here to one that already exists.
+/// `password_hash` is `None` when the admin left the password field blank in
+/// the edit form; `COALESCE` lets that mean "keep the current hash" without
+/// a second round-trip to fetch it first.
+#[allow(clippy::too_many_arguments)]
+pub async fn admin_update_user(
+    backend: &DbBackend,
+    id: &str,
+    user_code: &str,
+    username: Option<&str>,
+    first_name: &str,
+    last_name: &str,
+    tc_no: &str,
+    email: &str,
+    password_hash: Option<&str>,
+    role: &str,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    if let Some(pool) = as_pg(backend) {
+        let row = sqlx::query_as::<_, UserRow>(
+            r#"
+            UPDATE users
+            SET
+                user_code = $2,
+                username = $3,
+                first_name = $4,
+                last_name = $5,
+                tc_no = $6,
+                email = $7,
+                password_hash = COALESCE($8, password_hash),
+                role = $9,
+                updated_at = NOW()
+            WHERE id = $1::uuid
+            RETURNING
+                id::text AS id,
+                user_code,
+                username,
+                first_name,
+                last_name,
+                tc_no,
+                email,
+                password_hash,
+                role,
+                CASE WHEN is_approved THEN 1 ELSE 0 END::int8 AS is_approved,
+                CASE WHEN is_banned THEN 1 ELSE 0 END::int8 AS is_banned,
+                ban_reason,
+                CASE WHEN email_verified THEN 1 ELSE 0 END::int8 AS email_verified,
+                created_at::text AS created_at,
+                updated_at::text AS updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(user_code)
+        .bind(username)
+        .bind(first_name)
+        .bind(last_name)
+        .bind(tc_no)
+        .bind(email)
+        .bind(password_hash)
+        .bind(role)
+        .fetch_optional(pool)
+        .await?;
+        return Ok(row);
+    }
+
+    if let Some(pool) = as_sqlite(backend) {
+        let row = sqlx::query_as::<_, UserRow>(
+            r#"
+            UPDATE users
+            SET
+                user_code = ?,
+                username = ?,
+                first_name = ?,
+                last_name = ?,
+                tc_no = ?,
+                email = ?,
+                password_hash = COALESCE(?, password_hash),
+                role = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            RETURNING
+                id,
+                user_code,
+                username,
+                first_name,
+                last_name,
+                tc_no,
+                email,
+                password_hash,
+                role,
+                is_approved,
+                is_banned,
+                ban_reason,
+                email_verified,
+                created_at,
+                updated_at
+            "#,
+        )
+        .bind(user_code)
+        .bind(username)
+        .bind(first_name)
+        .bind(last_name)
+        .bind(tc_no)
+        .bind(email)
+        .bind(password_hash)
+        .bind(role)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+        return Ok(row);
     }
 
     Ok(None)

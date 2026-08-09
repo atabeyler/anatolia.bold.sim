@@ -22,10 +22,40 @@ pub struct BanPayload {
 pub struct AdminCreateUserPayload {
     pub user_code: String,
     pub password: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub tc_no: String,
     pub username: Option<String>,
     pub email: Option<String>,
     #[serde(default)]
     pub is_admin: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AdminUpdateUserPayload {
+    pub user_code: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub tc_no: String,
+    pub username: Option<String>,
+    pub email: Option<String>,
+    /// Blank/omitted leaves the existing password untouched -- the edit
+    /// form always round-trips every other field, but re-requiring a
+    /// password on every edit would be a hostile UX for a simple name/TC
+    /// correction.
+    pub password: Option<String>,
+    #[serde(default)]
+    pub is_admin: bool,
+}
+
+fn validate_name_fields(first_name: &str, last_name: &str, tc_no: &str) -> Option<&'static str> {
+    if first_name.trim().is_empty() || last_name.trim().is_empty() {
+        return Some("First and last name are required.");
+    }
+    if !tc_no.chars().all(|c| c.is_ascii_digit()) || tc_no.len() != 11 {
+        return Some("National ID must be an 11-digit number.");
+    }
+    None
 }
 
 /// Plain `!=` on the seed token would let a network attacker recover it
@@ -77,9 +107,10 @@ pub async fn list_users(State(state): State<AppState>, headers: axum::http::Head
 // Distinct from self-service `auth::register`: that flow always lands a new
 // account in role "pending"/is_approved=false, awaiting this same admin's
 // review. An admin creating an account directly already *is* that review --
-// the account is immediately active, and skips the national-ID/full-name
-// fields registration requires (this route has no KYC purpose, it's for
-// accounts the admin is vouching for themselves).
+// the account is immediately active. It still collects the same
+// first/last name + national-ID fields registration does (data quality --
+// this repo's own KYC/legal recordkeeping needs a real name and TC no on
+// every account, admin-created or not), it just skips the approval wait.
 pub async fn create_user(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -95,6 +126,10 @@ pub async fn create_user(
     }
 
     if let Some(err) = validate_password(&payload.password) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
+    }
+
+    if let Some(err) = validate_name_fields(&payload.first_name, &payload.last_name, &payload.tc_no) {
         return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
     }
 
@@ -118,15 +153,100 @@ pub async fn create_user(
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
     };
 
-    match admin_create_user(&state.backend, &code, username, &email, &hashed, role).await {
+    match admin_create_user(
+        &state.backend,
+        &code,
+        username,
+        payload.first_name.trim(),
+        payload.last_name.trim(),
+        payload.tc_no.trim(),
+        &email,
+        &hashed,
+        role,
+    )
+    .await
+    {
         Ok(Some(user)) => (StatusCode::CREATED, Json(json!({"message": "User created.", "user": public_user(&user)}))).into_response(),
         Ok(None) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to create user."}))).into_response(),
         Err(err) => {
             let msg = err.to_string();
             if msg.contains("unique") || msg.contains("UNIQUE") {
-                (StatusCode::CONFLICT, Json(json!({"error": "This user code or email is already in use."}))).into_response()
+                (StatusCode::CONFLICT, Json(json!({"error": "This user code, national ID, or email is already in use."}))).into_response()
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to create user."}))).into_response()
+            }
+        }
+    }
+}
+
+// The screenshot this feature was modeled on shows a pencil/edit action per
+// row alongside ban/delete -- distinct from approve/reject (which only ever
+// flip is_approved/role) and from ban/unban (which only ever flip
+// is_banned). This is the one route that can actually correct a user's own
+// stored fields (name, TC no, user code, nickname, email, password, admin
+// flag) after the account already exists, same as the "add user" form's
+// fields but targeting an existing row instead of inserting a new one.
+pub async fn update_user_details(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<AdminUpdateUserPayload>,
+) -> impl IntoResponse {
+    if !require_admin(&state, &headers).await {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "Admin permission required."}))).into_response();
+    }
+
+    let code = payload.user_code.trim().to_uppercase();
+    if !(4..=20).contains(&code.len()) || !code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "User code must be 4-20 characters, letters and digits only."}))).into_response();
+    }
+
+    if let Some(err) = validate_name_fields(&payload.first_name, &payload.last_name, &payload.tc_no) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
+    }
+
+    let password_hash = match payload.password.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(pw) => {
+            if let Some(err) = validate_password(pw) {
+                return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
+            }
+            match hash(pw, bcrypt::DEFAULT_COST) {
+                Ok(v) => Some(v),
+                Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+            }
+        }
+        None => None,
+    };
+
+    let username = payload.username.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let email = match payload.email.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(e) => e.to_lowercase(),
+        None => format!("{}@no-email.internal", code.to_lowercase()),
+    };
+    let role = if payload.is_admin { "admin" } else { "user" };
+
+    match crate::db::admin_update_user(
+        &state.backend,
+        &id,
+        &code,
+        username,
+        payload.first_name.trim(),
+        payload.last_name.trim(),
+        payload.tc_no.trim(),
+        &email,
+        password_hash.as_deref(),
+        role,
+    )
+    .await
+    {
+        Ok(Some(user)) => Json(json!({"message": "User updated.", "user": public_user(&user)})).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "User not found."}))).into_response(),
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("unique") || msg.contains("UNIQUE") {
+                (StatusCode::CONFLICT, Json(json!({"error": "This user code, national ID, or email is already in use."}))).into_response()
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to update user."}))).into_response()
             }
         }
     }
