@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { text, type LangCode } from '../utils/i18n';
 import FooterBar from '../components/layout/FooterBar';
 import SimMenuOverlay from '../components/layout/SimMenuOverlay';
-import SettingsButton from '../components/layout/SettingsButton';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useSimStore } from '../store/simStore';
@@ -437,9 +436,8 @@ export default function LoginPage() {
       {/* Matrix (canvas at z2 + intro overlay at z200) */}
       <MatrixRain phase={phase} />
 
-      {/* AYARLAR + MENÜ buttons */}
+      {/* MENÜ button (also the entry point for Settings — see its own "Ayarlar" row) */}
       <div className="fixed z-30" style={{ top: 12, right: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <SettingsButton style={{ padding: '2px 8px', border: '1px solid rgba(160,200,176,0.35)', color: '#a0c8b0', background: 'transparent', fontSize: 14, letterSpacing: '0.08em' }} />
         <button
           onClick={() => setMenuOpen(true)}
           style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 8px', border: '1px solid rgba(160,200,176,0.35)', color: '#a0c8b0', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer' }}

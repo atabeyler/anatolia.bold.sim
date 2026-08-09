@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback, lazy, Suspense, type CSSPrope
 import FooterBar from '../components/layout/FooterBar';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
-import { Play, Pause, LogOut, ChevronLeft, ChevronRight, Users, Globe, Zap, Shield, Flame, Heart, Trash2, Sparkles, BookOpen, CircleSlash2, FastForward, X, Settings } from 'lucide-react';
+import { Play, Pause, LogOut, ChevronLeft, ChevronRight, Users, Globe, Zap, Shield, Flame, Heart, Trash2, Sparkles, BookOpen, CircleSlash2, FastForward, X } from 'lucide-react';
 import { useSimStore } from '../store/simStore';
 import ErrorBoundary from '../components/layout/ErrorBoundary';
 import { useSimWebSocket } from '../hooks/useSimWebSocket';
@@ -262,7 +262,7 @@ export default function SimulationPage() {
   const { simId } = useParams<{ simId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, accessToken, setCurrentSim, currentSim, stats, setStats, events, activePanel, setActivePanel, lang, speedMultiplier, setSpeed, resetLiveState, setEvents, simulationEnded, clearSimulationEnded, isWarping, fastForwardTarget, setSettingsOpen } = useSimStore();
+  const { user, accessToken, setCurrentSim, currentSim, stats, setStats, events, activePanel, setActivePanel, lang, speedMultiplier, setSpeed, resetLiveState, setEvents, simulationEnded, clearSimulationEnded, isWarping, fastForwardTarget } = useSimStore();
   const [individuals, setIndividuals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'harita' | 'durum'>('harita');
@@ -1069,24 +1069,7 @@ export default function SimulationPage() {
           }}>
             <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingTop: 4 }}>
 
-              {/* AYARLAR */}
-              <button
-                onClick={() => setSettingsOpen(true)}
-                title={text(lang as LangCode, { tr: 'AYARLAR', en: 'SETTINGS', de: 'EINSTELLUNGEN', fr: 'PARAMÈTRES', ar: 'الإعدادات' })}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: rightPanelExpanded ? 'flex-start' : 'center',
-                  gap: rightPanelExpanded ? 7 : 0,
-                  width: '100%', padding: rightPanelExpanded ? '6px 12px' : '7px 0',
-                  fontSize: 14, fontFamily: 'Share Tech Mono, monospace',
-                  background: 'transparent', borderLeft: '2px solid transparent',
-                  borderTop: 'none', borderRight: 'none', borderBottom: '1px solid #4a1a1a',
-                  color: '#8abda0', cursor: 'pointer', whiteSpace: 'nowrap', boxSizing: 'border-box',
-                }}>
-                <Settings size={16} style={{ flexShrink: 0 }} />
-                {rightPanelExpanded && <span>{text(lang as LangCode, { tr: 'AYARLAR', en: 'SETTINGS', de: 'EINSTELLUNGEN', fr: 'PARAMÈTRES', ar: 'الإعدادات' })}</span>}
-              </button>
-
-              {/* MENÜ */}
+              {/* MENÜ (also the entry point for Settings — see its own "Ayarlar" row, consolidated there for consistency with every other page's header instead of a separate button here) */}
               <button
                 onClick={() => setMenuOpen(true)}
                 title={text(lang as LangCode, { tr: 'MENÜ', en: 'MENU', de: 'MENÜ', fr: 'MENU', ar: 'القائمة' })}

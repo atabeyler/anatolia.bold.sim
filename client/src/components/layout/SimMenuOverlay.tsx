@@ -74,7 +74,7 @@ function renderGuideBlock(block: (typeof GUIDE_BLOCKS)[number], lang: LangCode, 
 }
 
 export default function SimMenuOverlay({ isOpen, onClose, mobileActions, menuPage, onMenuPageChange }: Props) {
-  const { lang } = useSimStore();
+  const { lang, setSettingsOpen } = useSimStore();
   const activeLang = lang as LangCode;
   const [internalPage, setInternalPage] = useState<Page>(null);
 
@@ -116,6 +116,17 @@ export default function SimMenuOverlay({ isOpen, onClose, mobileActions, menuPag
         {/* Main menu list */}
         {page === null && (
           <div style={{ padding: '6px 0' }}>
+            {/* Settings lives here rather than as its own header button on
+                every page -- consolidating the two icon-only header buttons
+                (⚙ and ☰, formerly a standalone SettingsButton component) into
+                one menu entry point is both a cleaner header and what fixed
+                the header overflowing on narrow phones (see DashboardPage's
+                own mobile-overflow fix). Opens the globally-mounted
+                SettingsOverlay (App.tsx) via the shared store flag. */}
+            <button onClick={() => { onClose(); setSettingsOpen(true); }}
+              style={{ display: 'block', width: '100%', padding: '9px 14px', background: 'transparent', border: 'none', borderBottom: '1px solid #0a1a10', color: '#a0c8b0', fontSize: 14, textAlign: activeLang === 'ar' ? 'right' : 'left', cursor: 'pointer', letterSpacing: '0.08em', fontFamily: 'Share Tech Mono, monospace' }}>
+              › {menuText(activeLang, 'menu_settings')}
+            </button>
             {MENU_ITEMS.map(item => (
               <button key={item.id} onClick={() => setPage(item.id)}
                 style={{ display: 'block', width: '100%', padding: '9px 14px', background: 'transparent', border: 'none', borderBottom: '1px solid #0a1a10', color: '#a0c8b0', fontSize: 14, textAlign: activeLang === 'ar' ? 'right' : 'left', cursor: 'pointer', letterSpacing: '0.08em', fontFamily: 'Share Tech Mono, monospace' }}>

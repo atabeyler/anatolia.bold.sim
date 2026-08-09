@@ -7,7 +7,6 @@ import axios from 'axios';
 import { useSimStore } from '../store/simStore';
 import SimCreationWizard from '../components/SimCreationWizard';
 import SimMenuOverlay from '../components/layout/SimMenuOverlay';
-import SettingsButton from '../components/layout/SettingsButton';
 import { CLOUD_API_URL, cloudUrl, isLocalOrigin } from '../utils/cloud';
 import { isWasmLocalModeActive } from '../wasmLocal/mode';
 
@@ -425,10 +424,9 @@ export default function DashboardPage() {
               <LogOut size={13} />
               <span className="hidden sm:inline">{text(lang as LangCode, { tr: 'ÇIKIŞ', en: 'EXIT', de: 'AUSGANG', fr: 'QUITTER', ar: 'خروج' })}</span>
             </button>
-            <SettingsButton hideLabelOnMobile style={{ padding: '4px 10px', border: 'none', color: '#ffffff', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', flexShrink: 0 }} />
             <button onClick={() => setMenuOpen(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px', border: 'none', color: '#ffffff', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer', flexShrink: 0 }}>
-              ☰ <span className="hidden sm:inline">{text(lang as LangCode, { tr: 'MENÜ', en: 'MENU', de: 'MENÜ', fr: 'MENU', ar: 'القائمة' })}</span>
+              ☰ {text(lang as LangCode, { tr: 'MENÜ', en: 'MENU', de: 'MENÜ', fr: 'MENU', ar: 'القائمة' })}
             </button>
           </div>
         </div>

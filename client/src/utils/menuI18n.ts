@@ -22,6 +22,7 @@ export const MENU_TEXT = {
   page_about: { tr: 'HAKKIMIZDA', en: 'ABOUT', de: 'ÜBER UNS', fr: 'À PROPOS', ar: 'حول' },
   page_mission: { tr: 'MİSYON & VİZYON', en: 'MISSION & VISION', de: 'MISSION & VISION', fr: 'MISSION & VISION', ar: 'المهمة والرؤية' },
   page_contact: { tr: 'İLETİŞİM', en: 'CONTACT', de: 'KONTAKT', fr: 'CONTACT', ar: 'تواصل' },
+  menu_settings: { tr: '⚙ Ayarlar', en: '⚙ Settings', de: '⚙ Einstellungen', fr: '⚙ Paramètres', ar: '⚙ الإعدادات' },
   menu_guide: { tr: '📖 Kullanım Kılavuzu', en: '📖 User Guide', de: '📖 Anleitung', fr: '📖 Guide', ar: '📖 دليل' },
   menu_about: { tr: 'Hakkımızda', en: 'About', de: 'Über uns', fr: 'À propos', ar: 'حول' },
   menu_mission: { tr: 'Misyon & Vizyon', en: 'Mission & Vision', de: 'Mission', fr: 'Mission', ar: 'المهمة' },
