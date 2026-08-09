@@ -194,6 +194,49 @@ export default function AdminPage() {
     load();
   }
 
+  // Shared between the desktop table row and the mobile card layout below,
+  // so the two views can never drift apart on which actions a given user
+  // gets (this is exactly what the mobile bug report turned out to be --
+  // the actions weren't missing, they were just off-screen past the
+  // table's unwrapped horizontal overflow on a narrow viewport).
+  function UserActions({ u }: { u: UserRow }) {
+    return (
+      <>
+        <button onClick={() => openEdit(u)} title={text(l, { tr: 'Düzelt', en: 'Edit', de: 'Bearbeiten', fr: 'Modifier', ar: 'تعديل' })}
+          className="p-1.5 text-sim-accent hover:bg-sim-accent/10 transition-colors rounded">
+          <Pencil size={16} />
+        </button>
+        {!u.is_approved && u.role !== 'admin' && (<>
+          <button onClick={() => approve(u.id)} title={text(l, { tr: 'Onayla', en: 'Approve', de: 'Genehmigen', fr: 'Approuver', ar: 'موافقة' })}
+            className="p-1.5 text-sim-green hover:bg-sim-green/10 transition-colors rounded">
+            <CheckCircle size={16} />
+          </button>
+          <button onClick={() => reject(u.id)} title={text(l, { tr: 'Reddet', en: 'Reject', de: 'Ablehnen', fr: 'Rejeter', ar: 'رفض' })}
+            className="p-1.5 text-sim-red hover:bg-sim-red/10 transition-colors rounded">
+            <XCircle size={16} />
+          </button>
+        </>)}
+        {u.is_approved && u.role !== 'admin' && (
+          u.is_banned
+            ? <button onClick={() => unban(u.id)} title={text(l, { tr: 'Engeli Kaldır', en: 'Unban', de: 'Entsperren', fr: 'Débannir', ar: 'إلغاء الحظر' })}
+                className="p-1.5 text-sim-gold hover:bg-sim-gold/10 transition-colors rounded">
+                <ShieldOff size={16} />
+              </button>
+            : <button onClick={() => setBanTarget(u.id)} title={text(l, { tr: 'Engelle', en: 'Ban', de: 'Sperren', fr: 'Bannir', ar: 'حظر' })}
+                className="p-1.5 text-sim-red hover:bg-sim-red/10 transition-colors rounded">
+                <Ban size={16} />
+              </button>
+        )}
+        {u.role !== 'admin' && (
+          <button onClick={() => deleteUser(u.id)} title={text(l, { tr: 'Sil', en: 'Delete', de: 'Löschen', fr: 'Supprimer', ar: 'حذف' })}
+            className="p-1.5 text-sim-muted hover:text-sim-red hover:bg-sim-red/10 transition-colors rounded">
+            <Trash2 size={16} />
+          </button>
+        )}
+      </>
+    );
+  }
+
   const pending = users.filter(u => !u.is_approved && u.role === 'pending');
   // A single, unified list instead of separate pending/approved/all tabs --
   // pending registrations (the ones actually needing admin action) surface
@@ -512,104 +555,123 @@ export default function AdminPage() {
             )}
           </div>
         ) : (
-          <div style={{ border: '1px solid rgba(79,110,247,0.18)', background: 'rgba(4,4,15,0.9)' }}>
-            <table className="w-full">
-              <thead>
-                <tr style={{ borderBottom: '1px solid rgba(79,110,247,0.2)' }}>
-                  {[
-                    text(l, { tr: 'KOD', en: 'CODE', de: 'CODE', fr: 'CODE', ar: 'الرمز' }),
-                    text(l, { tr: 'AD SOYAD', en: 'FULL NAME', de: 'NAME', fr: 'NOM COMPLET', ar: 'الاسم الكامل' }),
-                    text(l, { tr: 'TC NO', en: 'ID NO', de: 'AUSWEIS-NR.', fr: "N° D'IDENTITÉ", ar: 'رقم الهوية' }),
-                    text(l, { tr: 'E-POSTA', en: 'EMAIL', de: 'E-MAIL', fr: 'E-MAIL', ar: 'البريد الإلكتروني' }),
-                    text(l, { tr: 'DURUM', en: 'STATUS', de: 'STATUS', fr: 'STATUT', ar: 'الحالة' }),
-                    text(l, { tr: 'TARİH', en: 'DATE', de: 'DATUM', fr: 'DATE', ar: 'التاريخ' }),
-                    text(l, { tr: 'İŞLEMLER', en: 'ACTIONS', de: 'AKTIONEN', fr: 'ACTIONS', ar: 'الإجراءات' }),
-                  ].map(h => (
-                    <th key={h} className="text-left px-4 py-3">
-                      <span className="font-share-tech tracking-widest" style={{ fontSize: 11, color: '#4f6ef7' }}>{h}</span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {displayed.map(u => (
-                  <tr key={u.id} style={{ borderBottom: '1px solid rgba(79,110,247,0.06)' }}
-                    className="hover:bg-sim-border/10 transition-colors">
-                    <td className="px-4 py-3">
-                      <span className="font-orbitron font-bold text-sim-accent" style={{ fontSize: 13 }}>{u.user_code}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-share-tech text-sim-text" style={{ fontSize: 14 }}>
+          <>
+            {/* Mobile: stacked cards -- a 7-column table has no way to fit a
+                narrow viewport, and letting it overflow (the previous
+                behavior) pushed the actions column off-screen entirely
+                with no visual hint there was more to scroll to. */}
+            <div className="flex flex-col gap-3 sm:hidden">
+              {displayed.map(u => (
+                <div key={u.id} className="hud-panel relative p-3.5">
+                  <span className="hud-corner-tr" /><span className="hud-corner-bl" />
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <div className="font-orbitron font-bold text-sim-accent" style={{ fontSize: 14 }}>{u.user_code}</div>
+                      <div className="font-share-tech text-sim-text" style={{ fontSize: 14 }}>
                         {(u.first_name || u.last_name) ? `${u.first_name} ${u.last_name}`.trim() : (u.username ?? '—')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => toggleTc(u.id)}
-                        title={text(l, { tr: 'Göster/Gizle', en: 'Show/Hide', de: 'Anzeigen/Verbergen', fr: 'Afficher/Masquer', ar: 'إظهار/إخفاء' })}
-                        className="flex items-center gap-1.5 font-share-tech hover:text-sim-accent transition-colors"
-                        style={{ fontSize: 13, color: '#8abda0' }}
-                      >
-                        {revealedTc.has(u.id) ? <Eye size={12} /> : <EyeOff size={12} />}
-                        {revealedTc.has(u.id) ? (u.tc_no ?? '—') : maskTc(u.tc_no)}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-share-tech" style={{ fontSize: 13, color: '#8abda0' }}>{u.email.endsWith('@no-email.internal') ? '—' : u.email}</span>
-                    </td>
-                    <td className="px-4 py-3">
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-1">
                       {u.is_banned
                         ? <Badge label={text(l, { tr: 'BANLANDI', en: 'BANNED', de: 'GESPERRT', fr: 'BANNI', ar: 'محظور' })} color="#e05a5a" />
                         : u.is_approved
                           ? <Badge label={text(l, { tr: 'ONAYLANDI', en: 'APPROVED', de: 'GENEHMIGT', fr: 'APPROUVÉ', ar: 'موافَق عليه' })} color="#4ecb71" />
                           : <Badge label={text(l, { tr: 'BEKLIYOR', en: 'PENDING', de: 'AUSSTEHEND', fr: 'EN ATTENTE', ar: 'قيد الانتظار' })} color="#d4a838" />}
                       {u.role === 'admin' && <Badge label={text(l, { tr: 'ADMİN', en: 'ADMIN', de: 'ADMIN', fr: 'ADMIN', ar: 'مسؤول' })} color="#00d4ff" />}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-share-tech" style={{ fontSize: 13, color: '#6090a0' }}>
-                        {new Date(u.created_at).toLocaleDateString(LOCALE_MAP[l] ?? 'en-US')}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => openEdit(u)} title={text(l, { tr: 'Düzelt', en: 'Edit', de: 'Bearbeiten', fr: 'Modifier', ar: 'تعديل' })}
-                          className="p-1.5 text-sim-accent hover:bg-sim-accent/10 transition-colors rounded">
-                          <Pencil size={16} />
-                        </button>
-                        {!u.is_approved && u.role !== 'admin' && (<>
-                          <button onClick={() => approve(u.id)} title={text(l, { tr: 'Onayla', en: 'Approve', de: 'Genehmigen', fr: 'Approuver', ar: 'موافقة' })}
-                            className="p-1.5 text-sim-green hover:bg-sim-green/10 transition-colors rounded">
-                            <CheckCircle size={16} />
-                          </button>
-                          <button onClick={() => reject(u.id)} title={text(l, { tr: 'Reddet', en: 'Reject', de: 'Ablehnen', fr: 'Rejeter', ar: 'رفض' })}
-                            className="p-1.5 text-sim-red hover:bg-sim-red/10 transition-colors rounded">
-                            <XCircle size={16} />
-                          </button>
-                        </>)}
-                        {u.is_approved && u.role !== 'admin' && (
-                          u.is_banned
-                            ? <button onClick={() => unban(u.id)} title={text(l, { tr: 'Engeli Kaldır', en: 'Unban', de: 'Entsperren', fr: 'Débannir', ar: 'إلغاء الحظر' })}
-                                className="p-1.5 text-sim-gold hover:bg-sim-gold/10 transition-colors rounded">
-                                <ShieldOff size={16} />
-                              </button>
-                            : <button onClick={() => setBanTarget(u.id)} title={text(l, { tr: 'Engelle', en: 'Ban', de: 'Sperren', fr: 'Bannir', ar: 'حظر' })}
-                                className="p-1.5 text-sim-red hover:bg-sim-red/10 transition-colors rounded">
-                                <Ban size={16} />
-                              </button>
-                        )}
-                        {u.role !== 'admin' && (
-                          <button onClick={() => deleteUser(u.id)} title={text(l, { tr: 'Sil', en: 'Delete', de: 'Löschen', fr: 'Supprimer', ar: 'حذف' })}
-                            className="p-1.5 text-sim-muted hover:text-sim-red hover:bg-sim-red/10 transition-colors rounded">
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                      </div>
-                    </td>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => toggleTc(u.id)}
+                    className="flex items-center gap-1.5 font-share-tech hover:text-sim-accent transition-colors mb-1"
+                    style={{ fontSize: 13, color: '#8abda0' }}
+                  >
+                    {revealedTc.has(u.id) ? <Eye size={12} /> : <EyeOff size={12} />}
+                    {revealedTc.has(u.id) ? (u.tc_no ?? '—') : maskTc(u.tc_no)}
+                  </button>
+                  <div className="font-share-tech mb-1 break-all" style={{ fontSize: 13, color: '#8abda0' }}>
+                    {u.email.endsWith('@no-email.internal') ? '—' : u.email}
+                  </div>
+                  <div className="font-share-tech mb-3" style={{ fontSize: 12, color: '#6090a0' }}>
+                    {new Date(u.created_at).toLocaleDateString(LOCALE_MAP[l] ?? 'en-US')}
+                  </div>
+                  <div className="flex items-center gap-1 flex-wrap border-t pt-2" style={{ borderColor: 'rgba(79,110,247,0.15)' }}>
+                    <UserActions u={u} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop/tablet: table, wrapped so it scrolls within its own
+                box instead of blowing out the page width. */}
+            <div className="hidden sm:block overflow-x-auto" style={{ border: '1px solid rgba(79,110,247,0.18)', background: 'rgba(4,4,15,0.9)' }}>
+              <table className="w-full">
+                <thead>
+                  <tr style={{ borderBottom: '1px solid rgba(79,110,247,0.2)' }}>
+                    {[
+                      text(l, { tr: 'KOD', en: 'CODE', de: 'CODE', fr: 'CODE', ar: 'الرمز' }),
+                      text(l, { tr: 'AD SOYAD', en: 'FULL NAME', de: 'NAME', fr: 'NOM COMPLET', ar: 'الاسم الكامل' }),
+                      text(l, { tr: 'TC NO', en: 'ID NO', de: 'AUSWEIS-NR.', fr: "N° D'IDENTITÉ", ar: 'رقم الهوية' }),
+                      text(l, { tr: 'E-POSTA', en: 'EMAIL', de: 'E-MAIL', fr: 'E-MAIL', ar: 'البريد الإلكتروني' }),
+                      text(l, { tr: 'DURUM', en: 'STATUS', de: 'STATUS', fr: 'STATUT', ar: 'الحالة' }),
+                      text(l, { tr: 'TARİH', en: 'DATE', de: 'DATUM', fr: 'DATE', ar: 'التاريخ' }),
+                      text(l, { tr: 'İŞLEMLER', en: 'ACTIONS', de: 'AKTIONEN', fr: 'ACTIONS', ar: 'الإجراءات' }),
+                    ].map(h => (
+                      <th key={h} className="text-left px-4 py-3">
+                        <span className="font-share-tech tracking-widest" style={{ fontSize: 11, color: '#4f6ef7' }}>{h}</span>
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {displayed.map(u => (
+                    <tr key={u.id} style={{ borderBottom: '1px solid rgba(79,110,247,0.06)' }}
+                      className="hover:bg-sim-border/10 transition-colors">
+                      <td className="px-4 py-3">
+                        <span className="font-orbitron font-bold text-sim-accent" style={{ fontSize: 13 }}>{u.user_code}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-share-tech text-sim-text" style={{ fontSize: 14 }}>
+                          {(u.first_name || u.last_name) ? `${u.first_name} ${u.last_name}`.trim() : (u.username ?? '—')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => toggleTc(u.id)}
+                          title={text(l, { tr: 'Göster/Gizle', en: 'Show/Hide', de: 'Anzeigen/Verbergen', fr: 'Afficher/Masquer', ar: 'إظهار/إخفاء' })}
+                          className="flex items-center gap-1.5 font-share-tech hover:text-sim-accent transition-colors"
+                          style={{ fontSize: 13, color: '#8abda0' }}
+                        >
+                          {revealedTc.has(u.id) ? <Eye size={12} /> : <EyeOff size={12} />}
+                          {revealedTc.has(u.id) ? (u.tc_no ?? '—') : maskTc(u.tc_no)}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-share-tech" style={{ fontSize: 13, color: '#8abda0' }}>{u.email.endsWith('@no-email.internal') ? '—' : u.email}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {u.is_banned
+                          ? <Badge label={text(l, { tr: 'BANLANDI', en: 'BANNED', de: 'GESPERRT', fr: 'BANNI', ar: 'محظور' })} color="#e05a5a" />
+                          : u.is_approved
+                            ? <Badge label={text(l, { tr: 'ONAYLANDI', en: 'APPROVED', de: 'GENEHMIGT', fr: 'APPROUVÉ', ar: 'موافَق عليه' })} color="#4ecb71" />
+                            : <Badge label={text(l, { tr: 'BEKLIYOR', en: 'PENDING', de: 'AUSSTEHEND', fr: 'EN ATTENTE', ar: 'قيد الانتظار' })} color="#d4a838" />}
+                        {u.role === 'admin' && <Badge label={text(l, { tr: 'ADMİN', en: 'ADMIN', de: 'ADMIN', fr: 'ADMIN', ar: 'مسؤول' })} color="#00d4ff" />}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="font-share-tech" style={{ fontSize: 13, color: '#6090a0' }}>
+                          {new Date(u.created_at).toLocaleDateString(LOCALE_MAP[l] ?? 'en-US')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          <UserActions u={u} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 
