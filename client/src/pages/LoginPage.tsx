@@ -11,8 +11,16 @@ import { isTauriDesktop, returnToDesktopChooser } from '../utils/desktopUpdate';
 import { CHOICE_KEY as BROWSER_MODE_CHOICE_KEY } from '../components/layout/BrowserModeGate';
 
 /* ── Canvas starfield ─────────────────────────────────────── */
-function StarField() {
+// `dark` flips the star/trail palette: on the light background a
+// star drawn with the same bright hsla() values used on dark would be all
+// but invisible (near-white on near-white), so light mode uses deeper,
+// more saturated hues and a light-colored trail for the shooting star
+// instead of white-tinted ones.
+function StarField({ dark }: { dark: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const darkRef = useRef(dark);
+  useEffect(() => { darkRef.current = dark; }, [dark]);
+
   useEffect(() => {
     const c = ref.current!;
     const ctx = c.getContext('2d')!;
@@ -40,14 +48,15 @@ function StarField() {
 
     let frame: number;
     function draw() {
+      const isDark = darkRef.current;
       ctx.clearRect(0, 0, c.width, c.height);
       for (let i = shooting.length - 1; i >= 0; i--) {
         const s = shooting[i];
         s.x += s.vx; s.y += s.vy; s.alpha -= 0.015;
         if (s.alpha <= 0) { shooting.splice(i, 1); continue; }
         const grad = ctx.createLinearGradient(s.x - s.vx * 4, s.y - s.vy * 4, s.x, s.y);
-        grad.addColorStop(0, `rgba(120,160,255,0)`);
-        grad.addColorStop(1, `rgba(180,210,255,${s.alpha})`);
+        grad.addColorStop(0, isDark ? `rgba(120,160,255,0)` : `rgba(50,80,180,0)`);
+        grad.addColorStop(1, isDark ? `rgba(180,210,255,${s.alpha})` : `rgba(60,90,190,${s.alpha})`);
         ctx.beginPath(); ctx.strokeStyle = grad; ctx.lineWidth = 1.5;
         ctx.moveTo(s.x - s.vx * 6, s.y - s.vy * 6); ctx.lineTo(s.x, s.y); ctx.stroke();
       }
@@ -56,12 +65,13 @@ function StarField() {
         s.y = (s.y + s.vy + c.height) % c.height;
         s.phase += s.speed;
         const opacity = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(s.phase));
+        const lightness = isDark ? 80 : 40;
         ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${s.hue}, 80%, 80%, ${opacity})`; ctx.fill();
+        ctx.fillStyle = `hsla(${s.hue}, 80%, ${lightness}%, ${opacity})`; ctx.fill();
         if (s.r > 1) {
           ctx.beginPath(); ctx.arc(s.x, s.y, s.r * 3, 0, Math.PI * 2);
           const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * 3);
-          g.addColorStop(0, `hsla(${s.hue}, 90%, 90%, ${opacity * 0.3})`);
+          g.addColorStop(0, `hsla(${s.hue}, 90%, ${isDark ? 90 : 45}%, ${opacity * 0.3})`);
           g.addColorStop(1, 'transparent');
           ctx.fillStyle = g; ctx.fill();
         }
@@ -192,11 +202,13 @@ function ScrambleText({ text, active, delay = 0 }: { text: string; active: boole
 /* ── Matrix DNA Rain v2 — background layer + intro overlay ── */
 type Phase = 'full' | 'fade' | 'bg';
 
-function MatrixRain({ phase }: { phase: Phase }) {
+function MatrixRain({ phase, dark }: { phase: Phase; dark: boolean }) {
   const { lang } = useSimStore();
   const ref = useRef<HTMLCanvasElement>(null);
   const phaseRef = useRef(phase);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
+  const darkRef = useRef(dark);
+  useEffect(() => { darkRef.current = dark; }, [dark]);
 
   useEffect(() => {
     const c = ref.current!;
@@ -214,6 +226,7 @@ function MatrixRain({ phase }: { phase: Phase }) {
     let frame: number;
     function draw() {
       const p = phaseRef.current;
+      const isDark = darkRef.current;
       const targetSpeed = p === 'full' ? 1.0 : p === 'fade' ? 0.45 : 0.14;
       speed += (targetSpeed - speed) * 0.035;
 
@@ -223,7 +236,12 @@ function MatrixRain({ phase }: { phase: Phase }) {
         return;
       }
 
-      ctx.fillStyle = 'rgba(0,0,0,0.065)';
+      // The whole "digital rain" illusion comes from this translucent
+      // clear-rect leaving a fading trail rather than a hard wipe -- on a
+      // light background a black trail (however faint) reads as dirty
+      // smudging instead of a trail, so light mode clears with a light
+      // tint of its own page color instead.
+      ctx.fillStyle = isDark ? 'rgba(0,0,0,0.065)' : 'rgba(238,241,247,0.11)';
       ctx.fillRect(0, 0, c.width, c.height);
 
       const colCount = Math.floor(c.width / fs);
@@ -231,10 +249,19 @@ function MatrixRain({ phase }: { phase: Phase }) {
         if (drops[x] === undefined) drops[x] = Math.floor(Math.random() * -50);
         const y = drops[x];
         const bright = Math.random() > 0.93 && p !== 'bg';
-        const g = 150 + Math.floor(Math.random() * 80);
-        const b = 50 + Math.floor(Math.random() * 60);
         const a = p === 'bg' ? 0.28 + Math.random() * 0.14 : 0.65 + Math.random() * 0.35;
-        ctx.fillStyle = bright ? `rgba(210,255,210,${a})` : `rgba(0,${g},${b},${a})`;
+        if (isDark) {
+          const g = 150 + Math.floor(Math.random() * 80);
+          const b = 50 + Math.floor(Math.random() * 60);
+          ctx.fillStyle = bright ? `rgba(210,255,210,${a})` : `rgba(0,${g},${b},${a})`;
+        } else {
+          // Deeper, more saturated green (and a dark navy "bright" accent
+          // instead of near-white) so the characters stay legible against
+          // the light backdrop instead of washing out.
+          const g = 90 + Math.floor(Math.random() * 55);
+          const b = 20 + Math.floor(Math.random() * 40);
+          ctx.fillStyle = bright ? `rgba(20,40,120,${a})` : `rgba(0,${g},${b},${a})`;
+        }
         ctx.font = `${fs}px monospace`;
         ctx.fillText(chars[Math.floor(Math.random() * chars.length)], x * fs, y * fs);
         if (y * fs > c.height && Math.random() > 0.975) drops[x] = 0;
@@ -258,24 +285,24 @@ function MatrixRain({ phase }: { phase: Phase }) {
         <canvas ref={ref} style={{ display: 'block', width: '100%', height: '100%' }} />
       </div>
 
-      {/* Intro black overlay — z200, fades during 'fade', removed in 'bg' */}
+      {/* Intro overlay — z200, fades during 'fade', removed in 'bg' */}
       {phase !== 'bg' && (
         <div style={{
-          position: 'fixed', inset: 0, zIndex: 200, background: '#000',
+          position: 'fixed', inset: 0, zIndex: 200, background: dark ? '#000' : '#eef1f7',
           opacity: phase === 'full' ? 1 : 0,
           transition: phase === 'full' ? 'none' : 'opacity 2.4s ease',
           pointerEvents: 'none',
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
         }}>
-          <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 'clamp(18px,5vw,32px)', color: '#00e887', letterSpacing: '0.3em', fontWeight: 900, textShadow: '0 0 24px #00e887, 0 0 48px rgba(0,232,135,0.4)' }}>
+          <span style={{ fontFamily: 'Orbitron, monospace', fontSize: 'clamp(18px,5vw,32px)', color: dark ? '#00e887' : '#0a8a54', letterSpacing: '0.3em', fontWeight: 900, textShadow: dark ? '0 0 24px #00e887, 0 0 48px rgba(0,232,135,0.4)' : 'none' }}>
             {lang === 'tr' ? 'ANATOLİA-SİM' : 'ANATOLIA-SIM'}
           </span>
-          <span style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 13, color: '#4ecb71', letterSpacing: '0.28em', textShadow: '0 0 10px #4ecb71' }}>
+          <span style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 13, color: dark ? '#4ecb71' : '#2f8f57', letterSpacing: '0.28em', textShadow: dark ? '0 0 10px #4ecb71' : 'none' }}>
             {text(lang as LangCode, { tr: 'GENOM MATRİSİ YÜKLENİYOR…', en: 'LOADING GENOME MATRIX…', de: 'GENOM-MATRIX WIRD GELADEN…', fr: 'CHARGEMENT DE LA MATRICE GÉNOMIQUE…', ar: 'جارٍ تحميل مصفوفة الجينوم…' })}
           </span>
           <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
             {['A', 'T', 'C', 'G'].map((b, i) => (
-              <span key={b} style={{ fontFamily: 'Orbitron, monospace', fontSize: 11, color: ['#4f6ef7', '#e05a5a', '#d4a838', '#00e887'][i], letterSpacing: '0.1em', animation: `pulse ${0.8 + i * 0.2}s infinite` }}>{b}</span>
+              <span key={b} style={{ fontFamily: 'Orbitron, monospace', fontSize: 11, color: ['#4f6ef7', '#e05a5a', '#d4a838', dark ? '#00e887' : '#0a8a54'][i], letterSpacing: '0.1em', animation: `pulse ${0.8 + i * 0.2}s infinite` }}>{b}</span>
             ))}
           </div>
         </div>
@@ -297,7 +324,8 @@ interface SysStatus {
 /* ── Main Login Component ─────────────────────────────────── */
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { setUser, lang } = useSimStore();
+  const { setUser, lang, theme } = useSimStore();
+  const dark = theme !== 'light';
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPage, setMenuPage] = useState<'guide' | 'about' | 'mission' | 'contact' | null>(null);
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -431,16 +459,17 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-x-hidden flex flex-col items-center bg-[#030310] scanlines">
+    <div className="relative min-h-screen overflow-x-hidden flex flex-col items-center scanlines"
+      style={{ background: dark ? '#030310' : '#eef1f7' }}>
 
       {/* Matrix (canvas at z2 + intro overlay at z200) */}
-      <MatrixRain phase={phase} />
+      <MatrixRain phase={phase} dark={dark} />
 
       {/* MENÜ button (also the entry point for Settings — see its own "Ayarlar" row) */}
       <div className="fixed z-30" style={{ top: 12, right: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
         <button
           onClick={() => setMenuOpen(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 8px', border: '1px solid rgba(160,200,176,0.35)', color: '#a0c8b0', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 8px', border: `1px solid ${dark ? 'rgba(160,200,176,0.35)' : 'rgba(60,90,80,0.35)'}`, color: dark ? '#a0c8b0' : '#365044', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer' }}
         >
           ☰ {text(lang as LangCode, { tr: 'MENÜ', en: 'MENU', de: 'MENÜ', fr: 'MENU', ar: 'القائمة' })}
         </button>
@@ -454,7 +483,7 @@ export default function LoginPage() {
       />
 
       {/* Backgrounds (behind matrix canvas at z2, but matrix canvas has black bg so they're invisible during intro) */}
-      <StarField />
+      <StarField dark={dark} />
       <HexGrid />
       <ScanBar />
 
@@ -500,16 +529,16 @@ export default function LoginPage() {
               {STATUS.map((s, i) => (
                 <div key={s.label} className="flex items-center gap-1 boot-in" style={{ animationDelay: `${i * 80}ms` }}>
                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.ok ? 'bg-sim-green pulse-live' : 'bg-sim-red'}`} />
-                  <span style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 'clamp(11px, 1.05vw, 14px)', color: '#c0c8e8', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 'clamp(11px, 1.05vw, 14px)', color: dark ? '#c0c8e8' : '#3a4258', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
                     {s.label}
                   </span>
-                  <span style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 'clamp(11px, 1.05vw, 14px)', color: '#4ecb71', marginLeft: 2, whiteSpace: 'nowrap' }}>
+                  <span style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 'clamp(11px, 1.05vw, 14px)', color: dark ? '#4ecb71' : '#1f8a4c', marginLeft: 2, whiteSpace: 'nowrap' }}>
                     {s.val}
                   </span>
                 </div>
               ))}
             </div>
-            <div className="font-share-tech tracking-widest" style={{ fontSize: 'clamp(11px, 1.05vw, 14px)', color: '#c0c8e8', maxWidth: 'min(calc(100vw - 24px), 420px)' }}>
+            <div className="font-share-tech tracking-widest" style={{ fontSize: 'clamp(11px, 1.05vw, 14px)', color: dark ? '#c0c8e8' : '#3a4258', maxWidth: 'min(calc(100vw - 24px), 420px)' }}>
               <div style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', lineHeight: 1.25 }}>
                 LAT: {coords?.lat ?? '39.9334°N'} · LON: {coords?.lon ?? '32.8597°E'}
               </div>
@@ -549,8 +578,8 @@ export default function LoginPage() {
           <h1
             className="font-orbitron text-2xl sm:text-3xl font-bold tracking-[0.2em] flicker"
             style={{
-              color: '#00e887',
-              textShadow: '0 0 20px rgba(0,232,135,0.8), 0 0 40px rgba(0,232,135,0.4)',
+              color: dark ? '#00e887' : '#0a8a54',
+              textShadow: dark ? '0 0 20px rgba(0,232,135,0.8), 0 0 40px rgba(0,232,135,0.4)' : 'none',
             }}
           >
             <ScrambleText text={lang === 'tr' ? 'ANATOLİA-SİM' : 'ANATOLIA-SIM'} active={scrambling} />
@@ -559,7 +588,7 @@ export default function LoginPage() {
             className="font-share-tech tracking-[0.4em] mt-1"
             style={{
               fontSize: 18,
-              color: '#4f6ef7',
+              color: dark ? '#4f6ef7' : '#3652c4',
               opacity: scrambling ? 1 : 0,
               transition: 'opacity 1s ease',
               transitionDelay: '0.8s',
@@ -727,8 +756,8 @@ export default function LoginPage() {
                 window.location.href = '/';
               }
             }}
-            className="mt-4 font-share-tech tracking-widest uppercase text-sim-muted hover:text-[#a0b4ff] transition-colors"
-            style={{ fontSize: 12 }}
+            className={`mt-4 font-share-tech tracking-widest uppercase hover:text-[#a0b4ff] transition-colors ${dark ? 'text-sim-muted' : ''}`}
+            style={{ fontSize: 12, color: dark ? undefined : '#4a5a72' }}
           >
             {text(lang as LangCode, {
               tr: '← Bulut / Yerel Seçimine Dön',

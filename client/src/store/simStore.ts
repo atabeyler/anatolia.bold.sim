@@ -62,6 +62,15 @@ function getSavedLang() {
   }
 }
 
+function getSavedTheme(): 'dark' | 'light' {
+  try {
+    const saved = localStorage.getItem('anatolia_theme');
+    return saved === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
 const SOUND_SETTINGS_KEY = 'anatolia_sound_settings';
 
 interface SoundSettings {
@@ -490,8 +499,12 @@ export const useSimStore = create<SimStore>((set) => ({
     localStorage.setItem('anatolia_lang', nextLang);
     return { lang: nextLang };
   }),
-  theme: 'dark',
-  toggleTheme: () => set(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+  theme: getSavedTheme(),
+  toggleTheme: () => set(s => {
+    const next = s.theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('anatolia_theme', next); } catch { /* ignore */ }
+    return { theme: next };
+  }),
   soundSettings: getSavedSoundSettings(),
   setSoundSettings: (patch) => set(s => {
     const next = { ...s.soundSettings, ...patch };
