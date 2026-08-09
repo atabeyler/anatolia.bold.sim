@@ -7,7 +7,7 @@ import { text, type LangCode } from '../../utils/i18n';
  * button; opens the single globally-mounted SettingsOverlay (see App.tsx)
  * via the store's settingsOpen flag rather than owning its own modal state,
  * so every page's button opens the same overlay instance. */
-export default function SettingsButton({ style }: { style?: CSSProperties }) {
+export default function SettingsButton({ style, hideLabelOnMobile }: { style?: CSSProperties; hideLabelOnMobile?: boolean }) {
   const lang = useSimStore(s => s.lang);
   const setSettingsOpen = useSimStore(s => s.setSettingsOpen);
 
@@ -20,7 +20,7 @@ export default function SettingsButton({ style }: { style?: CSSProperties }) {
         ...style,
       }}>
       <Settings size={13} />
-      <span>{text(lang as LangCode, { tr: 'AYARLAR', en: 'SETTINGS', de: 'EINSTELLUNGEN', fr: 'PARAMÈTRES', ar: 'الإعدادات' })}</span>
+      <span className={hideLabelOnMobile ? 'hidden sm:inline' : undefined}>{text(lang as LangCode, { tr: 'AYARLAR', en: 'SETTINGS', de: 'EINSTELLUNGEN', fr: 'PARAMÈTRES', ar: 'الإعدادات' })}</span>
     </button>
   );
 }

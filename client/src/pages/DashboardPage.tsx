@@ -27,6 +27,19 @@ export default function DashboardPage() {
   const [uploading, setUploading]   = useState<string | null>(null);
   const [cleaning, setCleaning]     = useState(false);
   const [cleanMsg, setCleanMsg]     = useState<{ ok: boolean; text: string } | null>(null);
+  // The header's right-action button row (Clean DB, Admin, username, Exit,
+  // Settings, Menu) doesn't wrap -- on a narrow phone it silently overflowed
+  // the viewport, pushing Settings/Menu off-screen with no scroll
+  // affordance to reach them. Below this breakpoint the lower-priority
+  // actions move into the hamburger menu itself instead (mobileActions
+  // below), same pattern SimulationPage already uses for its own
+  // Exit/Terminate buttons.
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 640);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 640);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
   const headers = { Authorization: `Bearer ${accessToken}` };
   // In Yerel (local) mode this page is served from 127.0.0.1 and `sims`
   // below is this device's own SQLite list -- the account's cloud
@@ -392,14 +405,14 @@ export default function DashboardPage() {
               </span>
             )}
             <button onClick={runCleanup} disabled={cleaning} title={text(lang as LangCode, { tr: 'Veritabanı temizle', en: 'Clean up database', de: 'Datenbank bereinigen', fr: 'Nettoyer la base de données', ar: 'تنظيف قاعدة البيانات' })}
-              className="flex items-center gap-1.5 transition-colors"
+              className="hidden sm:flex items-center gap-1.5 transition-colors"
               style={{ fontFamily: 'Share Tech Mono,monospace', fontSize: 13, letterSpacing: '0.08em', color: cleaning ? 'rgba(212,168,56,0.4)' : 'rgba(212,168,56,0.85)', border: 'none', background: 'transparent', padding: '4px 8px', cursor: cleaning ? 'wait' : 'pointer' }}>
               <DatabaseZap size={13} />
               <span className="hidden sm:inline">{cleaning ? text(lang as LangCode, { tr: 'TEMİZLENİYOR...', en: 'CLEANING...', de: 'BEREINIGT...', fr: 'NETTOYAGE...', ar: 'جارٍ التنظيف...' }) : text(lang as LangCode, { tr: 'DB TEMİZLE', en: 'CLEAN DB', de: 'DB BEREINIGEN', fr: 'NETTOYER DB', ar: 'تنظيف قاعدة البيانات' })}</span>
             </button>
             {user?.role === 'admin' && (
               <button onClick={() => navigate('/admin')} title={text(lang as LangCode, { tr: 'Yönetim Paneli', en: 'Admin Panel', de: 'Admin-Panel', fr: "Panneau d'administration", ar: 'لوحة الإدارة' })}
-                className="flex items-center gap-1.5 transition-colors"
+                className="hidden sm:flex items-center gap-1.5 transition-colors"
                 style={{ fontFamily: 'Share Tech Mono,monospace', fontSize: 13, letterSpacing: '0.08em', color: 'rgba(200,34,34,0.85)', border: 'none', background: 'transparent', padding: '4px 8px', cursor: 'pointer' }}>
                 <ShieldCheck size={13} />
                 <span className="hidden sm:inline">{text(lang as LangCode, { tr: 'YÖNETİM', en: 'ADMIN', de: 'ADMIN', fr: 'ADMIN', ar: 'الإدارة' })}</span>
@@ -407,15 +420,15 @@ export default function DashboardPage() {
             )}
             <span className="hidden sm:block font-share-tech tracking-widest font-bold" style={{ fontSize: 14, color: '#ffffff' }}>{user?.username?.toUpperCase()}</span>
             <button onClick={() => { logout(); navigate('/login'); }}
-              className="flex items-center gap-1.5 transition-colors"
+              className="hidden sm:flex items-center gap-1.5 transition-colors"
               style={{ fontFamily: 'Share Tech Mono,monospace', fontSize: 14, fontWeight: 700, letterSpacing: '0.1em', color: '#ffffff', background: 'transparent', border: 'none', padding: '4px 10px' }}>
               <LogOut size={13} />
               <span className="hidden sm:inline">{text(lang as LangCode, { tr: 'ÇIKIŞ', en: 'EXIT', de: 'AUSGANG', fr: 'QUITTER', ar: 'خروج' })}</span>
             </button>
-            <SettingsButton style={{ padding: '4px 10px', border: 'none', color: '#ffffff', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', flexShrink: 0 }} />
+            <SettingsButton hideLabelOnMobile style={{ padding: '4px 10px', border: 'none', color: '#ffffff', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', flexShrink: 0 }} />
             <button onClick={() => setMenuOpen(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px', border: 'none', color: '#ffffff', background: 'transparent', fontSize: 14, letterSpacing: '0.08em', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer', flexShrink: 0 }}>
-              ☰ {text(lang as LangCode, { tr: 'MENÜ', en: 'MENU', de: 'MENÜ', fr: 'MENU', ar: 'القائمة' })}
+              ☰ <span className="hidden sm:inline">{text(lang as LangCode, { tr: 'MENÜ', en: 'MENU', de: 'MENÜ', fr: 'MENU', ar: 'القائمة' })}</span>
             </button>
           </div>
         </div>
@@ -672,7 +685,33 @@ export default function DashboardPage() {
       </div>
 
       {/* Menu Overlay */}
-      <SimMenuOverlay isOpen={menuOpen} onClose={() => { setMenuOpen(false); setMenuPage(null); }} menuPage={menuPage} onMenuPageChange={setMenuPage} />
+      <SimMenuOverlay
+        isOpen={menuOpen}
+        onClose={() => { setMenuOpen(false); setMenuPage(null); }}
+        menuPage={menuPage}
+        onMenuPageChange={setMenuPage}
+        mobileActions={isMobile ? (
+          <div style={{ padding: '8px 14px', borderTop: '1px solid #0a1a10', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="font-share-tech tracking-widest" style={{ fontSize: 13, color: '#ffffff', textAlign: 'center' }}>{user?.username?.toUpperCase()}</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {user?.role === 'admin' && (
+                <button onClick={() => { setMenuOpen(false); navigate('/admin'); }}
+                  style={{ flex: 1, padding: '7px 0', fontSize: 13, border: '1px solid #4a1a1a', color: 'rgba(200,34,34,0.85)', background: 'transparent', letterSpacing: '0.06em', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer' }}>
+                  {text(lang as LangCode, { tr: 'YÖNETİM', en: 'ADMIN', de: 'ADMIN', fr: 'ADMIN', ar: 'الإدارة' })}
+                </button>
+              )}
+              <button onClick={runCleanup} disabled={cleaning}
+                style={{ flex: 1, padding: '7px 0', fontSize: 13, border: '1px solid #4a1a1a', color: 'rgba(212,168,56,0.85)', background: 'transparent', letterSpacing: '0.06em', fontFamily: 'Share Tech Mono, monospace', cursor: cleaning ? 'wait' : 'pointer' }}>
+                {cleaning ? text(lang as LangCode, { tr: 'TEMİZLENİYOR...', en: 'CLEANING...', de: 'BEREINIGT...', fr: 'NETTOYAGE...', ar: 'جارٍ التنظيف...' }) : text(lang as LangCode, { tr: 'DB TEMİZLE', en: 'CLEAN DB', de: 'DB BEREINIGEN', fr: 'NETTOYER DB', ar: 'تنظيف قاعدة البيانات' })}
+              </button>
+              <button onClick={() => { logout(); navigate('/login'); }}
+                style={{ flex: 1, padding: '7px 0', fontSize: 13, border: '1px solid #4a1a1a', color: '#a0c8b0', background: 'transparent', letterSpacing: '0.06em', fontFamily: 'Share Tech Mono, monospace', cursor: 'pointer' }}>
+                {text(lang as LangCode, { tr: 'ÇIKIŞ', en: 'EXIT', de: 'AUSGANG', fr: 'QUITTER', ar: 'خروج' })}
+              </button>
+            </div>
+          </div>
+        ) : undefined}
+      />
 
       {/* Footer — fixed to bottom of viewport */}
       <FooterBar mode="fixed" />

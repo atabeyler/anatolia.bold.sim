@@ -1063,6 +1063,7 @@ an existing panel instead:
 
 ```
 /api/auth        — login, register
+                   /me (PUT) — self-service edit of the logged-in user's own account fields (see below)
 /api/simulations — create, start, pause, get state, checkpoint, time machine
                    /:id/legends — record-holder spotlight (see below)
                    /:id/documentary — AI-narrated history (see below)
@@ -1077,6 +1078,23 @@ an existing panel instead:
                    /users (POST) — admin creates a user account directly (see below)
                    /users/:id (PUT) — admin edits an existing user's own fields (see below)
 ```
+
+**Self-service profile editing:** `PUT /api/auth/me` (`auth::update_me` →
+`db::self_update_user`) lets any logged-in user edit their own account
+(first/last name, national ID, user code, nickname, email, password) from
+the "Hesabım"/"Account" tab in `SettingsOverlay.tsx` -- shown only when a
+user is logged in, ahead of the Language/Sound/Display/About tabs.
+Unlike the admin edit route below, the target row is always derived from
+the caller's own JWT claims (never a client-supplied id), and there is no
+`is_admin`/role field on this payload at all -- a regular user can never
+grant themselves admin through it. It writes to the exact same `users` row
+`GET /api/admin/users` reads, so there is no separate sync step: whatever a
+user changes here is already visible the next time an admin reloads the
+admin panel. `PublicUser` (the shape `/api/auth/me` and login both return)
+gained two fields to support this -- `tc_no` and `nickname` (the real
+`username` column; the existing `username` field on this struct is actually
+the user_code, kept under that name since every existing caller already
+treats it that way) -- neither was exposed to the client at all before this.
 
 **Admin-created accounts:** `POST /api/admin/users` (`admin::create_user`) lets
 an admin create a login directly — first/last name, an 11-digit national ID

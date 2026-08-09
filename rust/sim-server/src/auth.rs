@@ -45,11 +45,21 @@ pub struct LoginPayload {
 #[derive(Debug, Serialize)]
 pub struct PublicUser {
     pub id: String,
+    /// This is the login/user_code (falling back to the `username` column
+    /// only if a row somehow has no user_code), not a display nickname --
+    /// kept under this name since every existing caller (headers, admin
+    /// list, dashboard) already treats it as "the code to show". `nickname`
+    /// below is the actual optional display name.
     pub username: String,
     pub email: String,
     pub role: String,
     pub first_name: String,
     pub last_name: String,
+    /// Added so SettingsOverlay's self-service "Hesap Bilgilerim" tab can
+    /// prefill the edit form -- neither of these was previously exposed
+    /// through `/api/auth/me` or the login response at all.
+    pub tc_no: Option<String>,
+    pub nickname: Option<String>,
 }
 
 pub fn public_user(user: &UserRow) -> PublicUser {
@@ -60,6 +70,8 @@ pub fn public_user(user: &UserRow) -> PublicUser {
         role: user.role.clone().unwrap_or_else(|| "pending".to_string()),
         first_name: user.first_name.clone(),
         last_name: user.last_name.clone(),
+        tc_no: user.tc_no.clone(),
+        nickname: user.username.clone(),
     }
 }
 
@@ -345,6 +357,103 @@ pub async fn me(State(state): State<AppState>, headers: axum::http::HeaderMap) -
     match load_user_by_id(&state.backend, &claims.id).await {
         Ok(Some(user)) => Json(public_user(&user)).into_response(),
         _ => (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid session."}))).into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMePayload {
+    pub user_code: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub tc_no: String,
+    pub username: Option<String>,
+    pub email: Option<String>,
+    /// Blank/omitted leaves the existing password untouched, same as the
+    /// admin edit form's own password field.
+    pub password: Option<String>,
+}
+
+/// Self-service counterpart to `admin::update_user_details` -- the "Hesap
+/// Bilgilerim" tab in SettingsOverlay, available to any logged-in user
+/// rather than gated behind `require_admin`. Deliberately narrower than the
+/// admin route: the target row is always `claims.id` from the caller's own
+/// token (never a client-supplied id, so no user can edit anyone else's
+/// account this way), and there is no `is_admin`/role field at all -- a
+/// regular user can never grant themselves admin through this endpoint.
+/// Writing to the same `users` row the admin panel reads means there is no
+/// separate sync step: the next time an admin loads `/api/admin/users`,
+/// whatever the user changed here is already there.
+pub async fn update_me(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<UpdateMePayload>,
+) -> impl IntoResponse {
+    if is_local_backend(&state) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Accounts are managed in the cloud. Please edit your profile while connected to the cloud."})),
+        )
+            .into_response();
+    }
+
+    let claims = match auth_user_from_headers(&headers) {
+        Some(claims) => claims,
+        None => return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid session."}))).into_response(),
+    };
+
+    let code = payload.user_code.trim().to_uppercase();
+    if !(4..=20).contains(&code.len()) || !code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "User code must be 4-20 characters, letters and digits only."}))).into_response();
+    }
+    if payload.first_name.trim().is_empty() || payload.last_name.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "First and last name are required."}))).into_response();
+    }
+    if !payload.tc_no.chars().all(|c| c.is_ascii_digit()) || payload.tc_no.len() != 11 {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "National ID must be an 11-digit number."}))).into_response();
+    }
+
+    let password_hash = match payload.password.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(pw) => {
+            if let Some(err) = validate_password(pw) {
+                return (StatusCode::BAD_REQUEST, Json(json!({"error": err}))).into_response();
+            }
+            match hash(pw, DEFAULT_COST) {
+                Ok(v) => Some(v),
+                Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": err.to_string()}))).into_response(),
+            }
+        }
+        None => None,
+    };
+
+    let username = payload.username.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let email = match payload.email.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(e) => e.to_lowercase(),
+        None => format!("{}@no-email.internal", code.to_lowercase()),
+    };
+
+    match crate::db::self_update_user(
+        &state.backend,
+        &claims.id,
+        &code,
+        username,
+        payload.first_name.trim(),
+        payload.last_name.trim(),
+        payload.tc_no.trim(),
+        &email,
+        password_hash.as_deref(),
+    )
+    .await
+    {
+        Ok(Some(user)) => Json(json!({"message": "Profile updated.", "user": public_user(&user)})).into_response(),
+        Ok(None) => (StatusCode::UNAUTHORIZED, Json(json!({"error": "Invalid session."}))).into_response(),
+        Err(err) => {
+            let msg = err.to_string();
+            if msg.contains("unique") || msg.contains("UNIQUE") {
+                (StatusCode::CONFLICT, Json(json!({"error": "This user code, national ID, or email is already in use."}))).into_response()
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to update profile."}))).into_response()
+            }
+        }
     }
 }
 

@@ -290,7 +290,7 @@ export interface Moment {
 
 interface SimStore {
   // Auth
-  user: { id: string; username: string; email: string; role: string; first_name?: string; last_name?: string } | null;
+  user: { id: string; username: string; email: string; role: string; first_name?: string; last_name?: string; tc_no?: string | null; nickname?: string | null } | null;
   accessToken: string | null;
   setUser: (user: SimStore['user'], token: string) => void;
   logout: () => void;

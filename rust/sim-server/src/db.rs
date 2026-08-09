@@ -3106,6 +3106,116 @@ pub async fn admin_update_user(
     Ok(None)
 }
 
+/// Self-service counterpart to `admin_update_user`: same editable field set
+/// minus `role` (a regular user can never grant themselves admin this way)
+/// and minus any admin-permission check at the call site (the caller in
+/// auth.rs derives `id` from the requester's own JWT claims, never a
+/// client-supplied id, so this can only ever touch the caller's own row).
+#[allow(clippy::too_many_arguments)]
+pub async fn self_update_user(
+    backend: &DbBackend,
+    id: &str,
+    user_code: &str,
+    username: Option<&str>,
+    first_name: &str,
+    last_name: &str,
+    tc_no: &str,
+    email: &str,
+    password_hash: Option<&str>,
+) -> Result<Option<UserRow>, sqlx::Error> {
+    if let Some(pool) = as_pg(backend) {
+        let row = sqlx::query_as::<_, UserRow>(
+            r#"
+            UPDATE users
+            SET
+                user_code = $2,
+                username = $3,
+                first_name = $4,
+                last_name = $5,
+                tc_no = $6,
+                email = $7,
+                password_hash = COALESCE($8, password_hash),
+                updated_at = NOW()
+            WHERE id = $1::uuid
+            RETURNING
+                id::text AS id,
+                user_code,
+                username,
+                first_name,
+                last_name,
+                tc_no,
+                email,
+                password_hash,
+                role,
+                CASE WHEN is_approved THEN 1 ELSE 0 END::int8 AS is_approved,
+                CASE WHEN is_banned THEN 1 ELSE 0 END::int8 AS is_banned,
+                ban_reason,
+                CASE WHEN email_verified THEN 1 ELSE 0 END::int8 AS email_verified,
+                created_at::text AS created_at,
+                updated_at::text AS updated_at
+            "#,
+        )
+        .bind(id)
+        .bind(user_code)
+        .bind(username)
+        .bind(first_name)
+        .bind(last_name)
+        .bind(tc_no)
+        .bind(email)
+        .bind(password_hash)
+        .fetch_optional(pool)
+        .await?;
+        return Ok(row);
+    }
+
+    if let Some(pool) = as_sqlite(backend) {
+        let row = sqlx::query_as::<_, UserRow>(
+            r#"
+            UPDATE users
+            SET
+                user_code = ?,
+                username = ?,
+                first_name = ?,
+                last_name = ?,
+                tc_no = ?,
+                email = ?,
+                password_hash = COALESCE(?, password_hash),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            RETURNING
+                id,
+                user_code,
+                username,
+                first_name,
+                last_name,
+                tc_no,
+                email,
+                password_hash,
+                role,
+                is_approved,
+                is_banned,
+                ban_reason,
+                email_verified,
+                created_at,
+                updated_at
+            "#,
+        )
+        .bind(user_code)
+        .bind(username)
+        .bind(first_name)
+        .bind(last_name)
+        .bind(tc_no)
+        .bind(email)
+        .bind(password_hash)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+        return Ok(row);
+    }
+
+    Ok(None)
+}
+
 pub async fn update_user_flag(
     backend: &DbBackend,
     id: &str,

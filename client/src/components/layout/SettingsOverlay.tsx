@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import axios from 'axios';
 import { X } from 'lucide-react';
 import { useSimStore } from '../../store/simStore';
 import { text, type LangCode } from '../../utils/i18n';
@@ -7,8 +8,9 @@ import { isMusicPlaying } from '../../utils/audioEngine';
 import { isTauriDesktop, checkForDesktopUpdate } from '../../utils/desktopUpdate';
 import { isNativeAndroidApp } from '../../utils/nativeMode';
 import { checkForAndroidUpdateDetailed, installAndroidUpdate, type AndroidUpdateInfo } from '../../utils/androidUpdate';
+import { authUrl } from '../../utils/cloud';
 
-type Tab = 'language' | 'sound' | 'display' | 'about';
+type Tab = 'profile' | 'language' | 'sound' | 'display' | 'about';
 
 interface Props {
   isOpen: boolean;
@@ -53,10 +55,62 @@ function SliderRow({ label, value, disabled, onChange }: { label: string; value:
 type CheckState = 'idle' | 'checking' | 'up-to-date' | 'found' | 'error';
 
 export default function SettingsOverlay({ isOpen, onClose }: Props) {
-  const { lang, setLang, soundSettings, setSoundSettings, globeAutoRotate, setGlobeAutoRotate, updateReady, setUpdateReady } = useSimStore();
+  const { lang, setLang, soundSettings, setSoundSettings, globeAutoRotate, setGlobeAutoRotate, updateReady, setUpdateReady, user, accessToken, setUser } = useSimStore();
   const activeLang = lang as LangCode;
   const rtl = activeLang === 'ar';
-  const [tab, setTab] = useState<Tab>('language');
+  const [tab, setTab] = useState<Tab>(user ? 'profile' : 'language');
+
+  // Profile ("Hesap Bilgilerim") -- self-service edit of the logged-in
+  // user's own account fields, writing to the same `users` row the admin
+  // panel reads, so there's no separate sync step: an admin's next
+  // `/api/admin/users` load already reflects whatever was changed here.
+  const [pFirstName, setPFirstName] = useState('');
+  const [pLastName, setPLastName] = useState('');
+  const [pTcNo, setPTcNo] = useState('');
+  const [pUserCode, setPUserCode] = useState('');
+  const [pNickname, setPNickname] = useState('');
+  const [pEmail, setPEmail] = useState('');
+  const [pPassword, setPPassword] = useState('');
+  const [pError, setPError] = useState<string | null>(null);
+  const [pSuccess, setPSuccess] = useState(false);
+  const [pSaving, setPSaving] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    setPFirstName(user.first_name ?? '');
+    setPLastName(user.last_name ?? '');
+    setPTcNo(user.tc_no ?? '');
+    setPUserCode(user.username ?? '');
+    setPNickname(user.nickname ?? '');
+    setPEmail(user.email?.endsWith('@no-email.internal') ? '' : (user.email ?? ''));
+    setPPassword('');
+    setPError(null);
+    setPSuccess(false);
+  }, [user, isOpen]);
+
+  async function saveProfile() {
+    setPError(null);
+    setPSuccess(false);
+    setPSaving(true);
+    try {
+      const { data } = await axios.put(authUrl('/api/auth/me'), {
+        user_code: pUserCode,
+        first_name: pFirstName,
+        last_name: pLastName,
+        tc_no: pTcNo,
+        username: pNickname.trim() || null,
+        email: pEmail.trim() || null,
+        password: pPassword.trim() || null,
+      }, { headers: { Authorization: `Bearer ${accessToken}` } });
+      setUser(data.user, accessToken!);
+      setPPassword('');
+      setPSuccess(true);
+    } catch (err: any) {
+      setPError(err?.response?.data?.error ?? text(activeLang, { tr: 'Güncellenemedi.', en: 'Failed to update.', de: 'Aktualisierung fehlgeschlagen.', fr: 'Échec de la mise à jour.', ar: 'فشل التحديث.' }));
+    } finally {
+      setPSaving(false);
+    }
+  }
 
   const [checkState, setCheckState] = useState<CheckState>('idle');
   const [androidUpdate, setAndroidUpdate] = useState<AndroidUpdateInfo | null>(null);
@@ -117,11 +171,18 @@ export default function SettingsOverlay({ isOpen, onClose }: Props) {
   if (!isOpen) return null;
 
   const TABS: Array<{ id: Tab; label: string }> = [
+    ...(user ? [{ id: 'profile' as const, label: text(activeLang, { tr: 'Hesabım', en: 'Account', de: 'Konto', fr: 'Compte', ar: 'حسابي' }) }] : []),
     { id: 'language', label: text(activeLang, { tr: 'Dil', en: 'Language', de: 'Sprache', fr: 'Langue', ar: 'اللغة' }) },
     { id: 'sound', label: text(activeLang, { tr: 'Ses', en: 'Sound', de: 'Ton', fr: 'Son', ar: 'الصوت' }) },
     { id: 'display', label: text(activeLang, { tr: 'Görünüm', en: 'Display', de: 'Anzeige', fr: 'Affichage', ar: 'العرض' }) },
     { id: 'about', label: text(activeLang, { tr: 'Hakkında', en: 'About', de: 'Info', fr: 'À propos', ar: 'حول' }) },
   ];
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 10px', fontSize: 14, fontFamily: 'Share Tech Mono, monospace',
+    background: 'rgba(0,20,10,0.5)', border: '1px solid rgba(160,200,176,0.25)', color: '#e0f0e6',
+    outline: 'none',
+  };
 
   return (
     <div
@@ -158,6 +219,48 @@ export default function SettingsOverlay({ isOpen, onClose }: Props) {
             </button>
           ))}
         </div>
+
+        {tab === 'profile' && user && (
+          <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflowY: 'auto' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <input style={inputStyle} placeholder={text(activeLang, { tr: 'Ad', en: 'First name', de: 'Vorname', fr: 'Prénom', ar: 'الاسم' })}
+                value={pFirstName} onChange={e => setPFirstName(e.target.value)} />
+              <input style={inputStyle} placeholder={text(activeLang, { tr: 'Soyad', en: 'Last name', de: 'Nachname', fr: 'Nom', ar: 'اللقب' })}
+                value={pLastName} onChange={e => setPLastName(e.target.value)} />
+            </div>
+            <input style={inputStyle} placeholder={text(activeLang, { tr: 'TC Kimlik No (11 hane)', en: 'National ID (11 digits)', de: 'Ausweisnummer (11 Ziffern)', fr: "N° d'identité (11 chiffres)", ar: 'رقم الهوية (11 رقمًا)' })}
+              value={pTcNo} maxLength={11} onChange={e => setPTcNo(e.target.value.replace(/\D/g, ''))} />
+            <input style={inputStyle} placeholder={text(activeLang, { tr: 'Kullanıcı kodu', en: 'User code', de: 'Benutzercode', fr: 'Code utilisateur', ar: 'رمز المستخدم' })}
+              value={pUserCode} onChange={e => setPUserCode(e.target.value)} />
+            <input style={inputStyle} placeholder={text(activeLang, { tr: 'Rumuz (opsiyonel)', en: 'Nickname (optional)', de: 'Spitzname (optional)', fr: 'Pseudo (facultatif)', ar: 'الاسم المستعار (اختياري)' })}
+              value={pNickname} onChange={e => setPNickname(e.target.value)} />
+            <input style={inputStyle} placeholder={text(activeLang, { tr: 'E-posta', en: 'Email', de: 'E-Mail', fr: 'E-mail', ar: 'البريد الإلكتروني' })}
+              value={pEmail} onChange={e => setPEmail(e.target.value)} />
+            <input type="password" style={inputStyle} placeholder={text(activeLang, { tr: 'Yeni şifre (opsiyonel, boş bırakılırsa değişmez)', en: 'New password (optional, leave blank to keep current)', de: 'Neues Passwort (optional)', fr: 'Nouveau mot de passe (facultatif)', ar: 'كلمة مرور جديدة (اختياري)' })}
+              value={pPassword} onChange={e => setPPassword(e.target.value)} />
+            {pError && <span style={{ fontSize: 12, color: '#e05a5a' }}>{pError}</span>}
+            {pSuccess && !pError && (
+              <span style={{ fontSize: 12, color: '#00e887' }}>
+                {text(activeLang, { tr: '✓ Bilgileriniz güncellendi.', en: '✓ Your details were updated.', de: '✓ Ihre Angaben wurden aktualisiert.', fr: '✓ Vos informations ont été mises à jour.', ar: '✓ تم تحديث بياناتك.' })}
+              </span>
+            )}
+            <button
+              onClick={saveProfile}
+              disabled={pSaving || !pUserCode.trim() || !pFirstName.trim() || !pLastName.trim() || pTcNo.length !== 11}
+              style={{
+                padding: '8px 14px', fontSize: 14, alignSelf: 'flex-start',
+                border: '1px solid rgba(0,232,135,0.5)', color: '#00e887',
+                background: 'rgba(0,232,135,0.08)', fontFamily: 'Share Tech Mono, monospace',
+                cursor: pSaving ? 'default' : 'pointer',
+                opacity: pSaving || !pUserCode.trim() || !pFirstName.trim() || !pLastName.trim() || pTcNo.length !== 11 ? 0.5 : 1,
+                letterSpacing: '0.06em',
+              }}>
+              {pSaving
+                ? text(activeLang, { tr: 'KAYDEDİLİYOR…', en: 'SAVING…', de: 'WIRD GESPEICHERT…', fr: 'ENREGISTREMENT…', ar: 'جارٍ الحفظ…' })
+                : text(activeLang, { tr: 'ONAYLA', en: 'CONFIRM', de: 'BESTÄTIGEN', fr: 'CONFIRMER', ar: 'تأكيد' })}
+            </button>
+          </div>
+        )}
 
         {tab === 'language' && (
           <div style={{ padding: '6px 0' }}>
